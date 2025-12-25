@@ -1,0 +1,6 @@
+# Flyway config for docker-compose local/CI
+flyway.url=jdbc:postgresql://db:5432/aicasa_dev
+flyway.user=aicasa
+flyway.password=aicasa
+flyway.schemas=public
+flyway.locations=filesystem:/flyway/sql

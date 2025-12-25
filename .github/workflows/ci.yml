@@ -29,9 +29,8 @@ jobs:
       - name: OpenAPI lint
         run: pnpm openapi:lint
 
-      # ✅ Gate1：先不跑 codegen（避免生成物语法问题拖死 CI）
-      # - name: OpenAPI codegen
-      #   run: pnpm openapi:codegen
+      - name: OpenAPI codegen
+        run: pnpm openapi:codegen
 
       - name: Lint
         run: pnpm lint
@@ -41,6 +40,9 @@ jobs:
 
       - name: Unit tests
         run: pnpm test
+
+      - name: Contract tests (docker-compose)
+        run: pnpm contract:test
 
   secret-scan:
     runs-on: ubuntu-latest
@@ -62,11 +64,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      # Gate1：先不阻断 CI（后续 M2/M3 可改为 exit-code: '1' 并做治理）
+      # M2：SCA 阻断（先以 HIGH/CRITICAL 为门槛）
       - name: Trivy fs (SCA)
         uses: aquasecurity/trivy-action@0.28.0
         with:
           scan-type: "fs"
           scan-ref: "."
           severity: "CRITICAL,HIGH"
-          exit-code: "0"
+          exit-code: "1"

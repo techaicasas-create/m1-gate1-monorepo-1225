@@ -2,9 +2,11 @@ extends:
   - "spectral:oas"
 
 rules:
-  # Gate1：先保证能跑通；后续再逐步加严
-  oas3-api-servers: off
+  # M2：逐步恢复严格度（先恢复 operationId/description + servers）
+  oas3-api-servers: error
+  operation-operationId: error
+  operation-description: error
+
+  # 暂缓：历史 spec 可能有未引用组件/示例缺失，先不阻断
   oas3-unused-component: off
   oas3-valid-schema-example: off
-  operation-operationId: off
-  operation-description: off

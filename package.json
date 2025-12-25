@@ -4,16 +4,21 @@
   "packageManager": "pnpm@9.0.0",
   "scripts": {
     "lint": "pnpm -r --if-present lint",
-    "typecheck": "pnpm -r --if-present --filter '!@aicasa/api-client' --filter '!@aicasa/api' typecheck",
+
+    "openapi:lint": "bash ./scripts/openapi_lint.sh",
+    "openapi:codegen": "bash ./scripts/openapi_codegen_ts_fetch.sh",
+    "openapi:autofix": "python3 ./scripts/openapi_autofix.py",
+
+    "typecheck": "pnpm -r --if-present typecheck",
     "test": "pnpm -r --if-present --filter '!@aicasa/contract-tests' test",
-    "openapi:lint": "bash ./scripts/openapi_lint.sh"
+    "contract:test": "bash ./scripts/contract_test.sh"
   },
   "devDependencies": {
-  "@types/node": "^20.11.0",
-  "@types/pg": "^8.11.6",
-  "eslint": "^8.57.0",
-  "@typescript-eslint/eslint-plugin": "^7.0.0",
-  "@typescript-eslint/parser": "^7.0.0",
-  "@stoplight/spectral-cli": "^6.13.0"
-}
+    "@stoplight/spectral-cli": "^6.13.0",
+    "@types/node": "^20.11.0",
+    "@types/pg": "^8.11.6",
+    "@typescript-eslint/eslint-plugin": "^7.0.0",
+    "@typescript-eslint/parser": "^7.0.0",
+    "eslint": "^8.57.0"
+  }
 }

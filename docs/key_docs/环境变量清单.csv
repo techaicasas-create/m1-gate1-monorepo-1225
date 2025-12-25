@@ -12,7 +12,7 @@ Runtime,DB_POOL_SIZE,数据库连接池大小,API,DEV/STAGING/PROD,5,10,20,N,Clo
 Secret,IDP_TENANT_CONFIG,Identity Platform 多租户配置/项目,API,STAGING/PROD,Secret Manager:IDP_TENANT_CONFIG_STG,Secret Manager:IDP_TENANT_CONFIG_STG,Secret Manager:IDP_TENANT_CONFIG_PROD,Y,Secret Manager,按需,登录可用,
 Runtime,SESSION_TTL_SECONDS,会话有效期,API,STAGING/PROD,1209600,1209600,1209600,N,Cloud Run env,按需,cookie 过期时间,14天
 Runtime,COOKIE_DOMAIN,cookie 域名共享,API,STAGING/PROD,.example.com,.example.com,.example.com,N,Cloud Run env,按需,跨子域登录态共享,
-Runtime,COOKIE_SAMESITE,SameSite 策略,API,STAGING/PROD,Lax,Lax,Lax,N,Cloud Run env,按需,登录/接口正常,
+Runtime,COOKIE_SAMESITE,SameSite 策略,API,STAGING/PROD,lax,lax,lax,N,Cloud Run env,按需,登录/接口正常,
 Secret,CSRF_SECRET,CSRF 签名密钥,API,STAGING/PROD,Secret Manager:CSRF_SECRET_STG,Secret Manager:CSRF_SECRET_STG,Secret Manager:CSRF_SECRET_PROD,Y,Secret Manager,90天/按需,提交请求通过 CSRF 校验,
 Secret,TURNSTILE_SECRET,Turnstile 服务端密钥,API,STAGING/PROD,Secret Manager:TURNSTILE_SECRET_DEV,Secret Manager:TURNSTILE_SECRET_STG,Secret Manager:TURNSTILE_SECRET_PROD,Y,Secret Manager,90天/按需,线索/登录校验通过,
 Public,TURNSTILE_SITEKEY,Turnstile 前端 sitekey,Homepage,DEV/STAGING/PROD,dev-sitekey,stg-sitekey,prod-sitekey,N,Pages env,按需,验证码可渲染,替换为真实值

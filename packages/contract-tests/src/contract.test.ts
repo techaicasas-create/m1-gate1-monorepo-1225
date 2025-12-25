@@ -15,10 +15,10 @@ async function seedIfNeeded() {
   try {
     // 仅示例：插入一个 ticket（依赖 migrations 已执行）
     await client.query(
-      `insert into tickets(id, org_id, status, title, description, created_by, updated_by)
-       values ($1,$2,'OPEN','Seed Ticket','seed', $3, $3)
+      `insert into tickets(id, org_id, status, title, description)
+       values ($1,$2,'OPEN','Seed Ticket','seed')
        on conflict (id) do nothing`,
-      [TICKET_ID, ORG_ID, USER_ID]
+      [TICKET_ID, ORG_ID]
     );
   } finally {
     client.release();
@@ -124,5 +124,88 @@ describe("Gate1 contract smoke", () => {
       body: JSON.stringify({ description: "updated twice" })
     });
     expect(p2.status).toBe(412);
+  });
+
+  it("Files: presign-upload -> local put -> complete-upload -> download", async () => {
+    const { cookieHeader, csrf } = await debugLogin();
+
+    // 1) presign
+    const presignRes = await fetch(`${API_BASE}/files/presign-upload`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "cookie": cookieHeader,
+        "x-csrf-token": csrf,
+        "accept": "application/json",
+      },
+      body: JSON.stringify({
+        fileName: "hello.txt",
+        mime: "text/plain",
+        size: 5,
+        docType: "OTHER",
+        visibility: "INTERNAL",
+      }),
+    });
+    expect(presignRes.status).toBe(200);
+    const presignBody = await presignRes.json();
+    expect(presignBody).toHaveProperty("data.uploadId");
+    expect(presignBody).toHaveProperty("data.docId");
+    expect(presignBody).toHaveProperty("data.uploadUrl");
+
+    const uploadId = presignBody.data.uploadId as string;
+    const docId = presignBody.data.docId as string;
+    const uploadUrl = presignBody.data.uploadUrl as string;
+    const uploadToken = presignBody.data.headers?.["x-upload-token"] as string | undefined;
+
+    // 2) local upload (PUT)
+    const putRes = await fetch(uploadUrl, {
+      method: "PUT",
+      headers: {
+        "cookie": cookieHeader,
+        "content-type": "text/plain",
+        ...(uploadToken ? { "x-upload-token": uploadToken } : {}),
+      },
+      body: "hello",
+    });
+    expect(putRes.status).toBe(200);
+
+    // 3) complete
+    const completeRes = await fetch(`${API_BASE}/files/complete-upload`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "cookie": cookieHeader,
+        "x-csrf-token": csrf,
+        "accept": "application/json",
+      },
+      body: JSON.stringify({ uploadId, docId }),
+    });
+    expect(completeRes.status).toBe(200);
+    const completeBody = await completeRes.json();
+    expect(completeBody).toHaveProperty("data.id", docId);
+    const docEtag = completeRes.headers.get("etag");
+    expect(docEtag).toBeTruthy();
+
+    // 4) get document (should be READY in CI: FILE_SCAN_ENABLED=false)
+    const getDoc = await fetch(`${API_BASE}/documents/${docId}`, {
+      headers: { "cookie": cookieHeader, "accept": "application/json" },
+    });
+    expect(getDoc.status).toBe(200);
+    const getDocBody = await getDoc.json();
+    expect(getDocBody).toHaveProperty("data.id", docId);
+
+    // 5) download (json)
+    const dl = await fetch(`${API_BASE}/documents/${docId}/download`, {
+      headers: { "cookie": cookieHeader, "accept": "application/json" },
+    });
+    expect(dl.status).toBe(200);
+    const dlBody = await dl.json();
+    expect(dlBody).toHaveProperty("data.downloadUrl");
+
+    // 6) fetch file bytes (local provider: protected by cookie)
+    const raw = await fetch(dlBody.data.downloadUrl, { headers: { "cookie": cookieHeader } });
+    expect(raw.status).toBe(200);
+    const text = await raw.text();
+    expect(text).toBe("hello");
   });
 });

@@ -2,8 +2,7 @@ openapi: 3.0.3
 info:
   title: Hourglass Rentals API
   version: 1.0.6
-  description: '面向西班牙（Spain）上线的租赁管理平台 API（Admin / Owner / Tenant + Public Website
-    + CRM）。
+  description: '面向西班牙（Spain）上线的租赁管理平台 API（Admin / Owner / Tenant + Public Website + CRM）。
 
     本文件是字段级接口“唯一真相源（Source of Truth）”。前后端均以此为准。
 
@@ -105,8 +104,7 @@ components:
       type: http
       scheme: bearer
       bearerFormat: JWT
-      description: '建议使用 Google Identity Platform / Firebase Auth / Auth0 等签发 JWT；API
-        侧只做校验与 RBAC。
+      description: '建议使用 Google Identity Platform / Firebase Auth / Auth0 等签发 JWT；API 侧只做校验与 RBAC。
 
 
         ⚠️ M0-FULL：浏览器端推荐使用 HttpOnly Cookie 会话（见 sessionCookie + CSRF），Bearer 仅建议用于服务到服务或本地调试。'
@@ -2664,8 +2662,7 @@ components:
       pattern: ^-?\d+(\.\d{2})?$
     DocumentScanStatus:
       type: string
-      description: 文件扫描状态机：UPLOADED → SCANNING → READY / BLOCKED；扫描失败为 FAILED。仅 READY
-        可生成 downloadUrl/previewUrl。
+      description: 文件扫描状态机：UPLOADED → SCANNING → READY / BLOCKED；扫描失败为 FAILED。仅 READY 可生成 downloadUrl/previewUrl。
       enum:
       - UPLOADED
       - SCANNING
@@ -2674,8 +2671,7 @@ components:
       - FAILED
     TurnstileToken:
       type: string
-      description: Cloudflare Turnstile token（前端获取）。PUBLIC 高风险接口必须携带；服务端使用 TURNSTILE_SECRET
-        校验。
+      description: Cloudflare Turnstile token（前端获取）。PUBLIC 高风险接口必须携带；服务端使用 TURNSTILE_SECRET 校验。
       minLength: 1
       example: 0x4AAAAAA...
     TenantLeadCreateRequest:
@@ -2941,6 +2937,8 @@ paths:
           $ref: '#/components/responses/InternalError500'
       x-rate-limit-tier: NONE
       x-error-strategy: '403'
+      operationId: getMe
+      description: 获取当前登录用户信息（角色/绑定的 ownerId/tenantId/语言偏好）
   /me/preferences:
     patch:
       tags:
@@ -2993,6 +2991,8 @@ paths:
       x-audit: true
       x-audit-action: ME_UPDATE
       x-error-strategy: '403'
+      operationId: patchMePreferences
+      description: 更新当前用户偏好（语言/通知）
   /tenant-leads:
     post:
       tags:
@@ -3031,6 +3031,7 @@ paths:
       x-audit: true
       x-audit-action: LEAD_SUBMIT
       x-error-strategy: '400'
+      operationId: postTenantLeads
     get:
       tags:
       - Core
@@ -3071,6 +3072,8 @@ paths:
           $ref: '#/components/responses/InternalError500'
       x-rate-limit-tier: STANDARD
       x-error-strategy: 403/404
+      operationId: getTenantLeads
+      description: 查询租客线索（CRM/Admin）
   /tenant-leads/{leadId}:
     get:
       tags:
@@ -3113,6 +3116,8 @@ paths:
           $ref: '#/components/responses/InternalError500'
       x-rate-limit-tier: STANDARD
       x-error-strategy: 403/404
+      operationId: getTenantLeadsByLeadId
+      description: 获取单条租客线索
     patch:
       tags:
       - Core
@@ -3179,6 +3184,7 @@ paths:
       x-rate-limit-tier: STANDARD
       x-error-strategy: 403/404
       description: 并发控制：该接口启用 If-Match 乐观锁（基于 rowVersion/ETag）。
+      operationId: patchTenantLeadsByLeadId
   /landlord-leads:
     post:
       tags:
@@ -3214,6 +3220,7 @@ paths:
       x-audit: true
       x-audit-action: LEAD_SUBMIT
       x-error-strategy: '400'
+      operationId: postLandlordLeads
     get:
       tags:
       - Core
@@ -3244,6 +3251,8 @@ paths:
           $ref: '#/components/responses/InternalError500'
       x-rate-limit-tier: STANDARD
       x-error-strategy: 403/404
+      operationId: getLandlordLeads
+      description: 查询房东线索（Admin/CRM）
   /properties:
     get:
       tags:
@@ -3291,6 +3300,7 @@ paths:
           $ref: '#/components/responses/InternalError500'
       x-rate-limit-tier: STANDARD
       x-error-strategy: '400'
+      operationId: getProperties
     post:
       tags:
       - Core
@@ -3336,6 +3346,8 @@ paths:
       x-audit: true
       x-audit-action: PROPERTY_CREATE
       x-error-strategy: 403/404
+      operationId: postProperties
+      description: 创建房源（Admin/CRM）
   /properties/{propertyId}:
     get:
       tags:
@@ -3378,6 +3390,8 @@ paths:
           $ref: '#/components/responses/InternalError500'
       x-rate-limit-tier: STANDARD
       x-error-strategy: 403/404
+      operationId: getPropertiesByPropertyId
+      description: 获取房源详情
     patch:
       tags:
       - Core
@@ -3432,6 +3446,7 @@ paths:
       x-audit-action: PROPERTY_UPDATE
       x-error-strategy: 403/404
       description: 并发控制：该接口启用 If-Match 乐观锁（基于 rowVersion/ETag）。
+      operationId: patchPropertiesByPropertyId
     delete:
       tags:
       - Core
@@ -3474,6 +3489,7 @@ paths:
       x-audit-action: PROPERTY_DELETE
       x-error-strategy: 403/404
       description: 并发控制：该接口启用 If-Match 乐观锁（基于 rowVersion/ETag）。
+      operationId: deletePropertiesByPropertyId
   /leases:
     get:
       tags:
@@ -3521,6 +3537,8 @@ paths:
           $ref: '#/components/responses/InternalError500'
       x-rate-limit-tier: STANDARD
       x-error-strategy: 403/404
+      operationId: getLeases
+      description: 查询租约（Owner/Tenant/Admin 按权限过滤）
     post:
       tags:
       - Core
@@ -3562,6 +3580,8 @@ paths:
       x-audit: true
       x-audit-action: LEASE_CREATE
       x-error-strategy: 403/404
+      operationId: postLeases
+      description: 创建租约（Admin）
   /leases/{leaseId}:
     get:
       tags:
@@ -3604,6 +3624,8 @@ paths:
           $ref: '#/components/responses/InternalError500'
       x-rate-limit-tier: STANDARD
       x-error-strategy: 403/404
+      operationId: getLeasesByLeaseId
+      description: 获取租约详情
     patch:
       tags:
       - Core
@@ -3658,6 +3680,7 @@ paths:
       x-audit-action: LEASE_UPDATE
       x-error-strategy: 403/404
       description: 并发控制：该接口启用 If-Match 乐观锁（基于 rowVersion/ETag）。
+      operationId: patchLeasesByLeaseId
   /tickets:
     get:
       tags:
@@ -3715,6 +3738,8 @@ paths:
           $ref: '#/components/responses/InternalError500'
       x-rate-limit-tier: STANDARD
       x-error-strategy: 403/404
+      operationId: getTickets
+      description: 查询工单列表（Owner/Tenant/Admin）
     post:
       tags:
       - Tickets
@@ -3760,6 +3785,8 @@ paths:
       x-audit: true
       x-audit-action: TICKET_CREATE
       x-error-strategy: 403/404
+      operationId: postTickets
+      description: 创建工单（Tenant/Owner）
   /tickets/{ticketId}:
     get:
       tags:
@@ -3802,6 +3829,8 @@ paths:
           $ref: '#/components/responses/InternalError500'
       x-rate-limit-tier: STANDARD
       x-error-strategy: 403/404
+      operationId: getTicketsByTicketId
+      description: 获取工单详情
     patch:
       tags:
       - Tickets
@@ -3863,6 +3892,7 @@ paths:
       x-audit: true
       x-audit-action: TICKET_UPDATE
       x-error-strategy: 403/404
+      operationId: patchTicketsByTicketId
   /tickets/{ticketId}/comments:
     post:
       tags:
@@ -3910,6 +3940,8 @@ paths:
       x-audit: true
       x-audit-action: TICKET_COMMENT_CREATE
       x-error-strategy: 403/404
+      operationId: postTicketsByTicketIdComments
+      description: 追加工单评论/沟通记录
   /invoices:
     get:
       tags:
@@ -3957,6 +3989,8 @@ paths:
           $ref: '#/components/responses/InternalError500'
       x-rate-limit-tier: STANDARD
       x-error-strategy: 403/404
+      operationId: getInvoices
+      description: 查询账单（Owner/Tenant/Admin）
     post:
       tags:
       - Billing
@@ -4002,6 +4036,8 @@ paths:
       x-audit: true
       x-audit-action: INVOICE_CREATE
       x-error-strategy: 403/404
+      operationId: postInvoices
+      description: 创建账单（Admin）
   /invoices/{invoiceId}:
     get:
       tags:
@@ -4044,6 +4080,8 @@ paths:
           $ref: '#/components/responses/InternalError500'
       x-rate-limit-tier: STANDARD
       x-error-strategy: 403/404
+      operationId: getInvoicesByInvoiceId
+      description: 获取账单详情
     patch:
       tags:
       - Billing
@@ -4102,6 +4140,7 @@ paths:
       x-audit-action: INVOICE_UPDATE
       x-error-strategy: 403/404
       description: 并发控制：该接口启用 If-Match 乐观锁（基于 rowVersion/ETag）。
+      operationId: patchInvoicesByInvoiceId
   /invoices/{invoiceId}/payments:
     get:
       tags:
@@ -4136,6 +4175,8 @@ paths:
           $ref: '#/components/responses/InternalError500'
       x-rate-limit-tier: STANDARD
       x-error-strategy: 403/404
+      operationId: getInvoicesByInvoiceIdPayments
+      description: 获取某账单的付款记录
     post:
       tags:
       - Billing
@@ -4186,6 +4227,8 @@ paths:
       x-audit: true
       x-audit-action: PAYMENT_SUBMIT
       x-error-strategy: 403/404
+      operationId: postInvoicesByInvoiceIdPayments
+      description: 新增付款记录（Tenant 上传凭证=SUBMITTED；Admin 可直接 VERIFED）
   /payments/{paymentId}/verify:
     post:
       tags:
@@ -4237,6 +4280,7 @@ paths:
       x-audit-action: PAYMENT_SUBMIT
       x-error-strategy: 403/404
       description: 并发控制：该接口启用 If-Match 乐观锁（基于 rowVersion/ETag）。
+      operationId: postPaymentsByPaymentIdVerify
   /payments/{paymentId}/reject:
     post:
       tags:
@@ -4296,6 +4340,7 @@ paths:
       x-audit-action: PAYMENT_SUBMIT
       x-error-strategy: 403/404
       description: 并发控制：该接口启用 If-Match 乐观锁（基于 rowVersion/ETag）。
+      operationId: postPaymentsByPaymentIdReject
   /payments/{paymentId}/reverse:
     post:
       tags:
@@ -4354,6 +4399,7 @@ paths:
       x-audit-action: PAYMENT_SUBMIT
       x-error-strategy: 403/404
       description: 并发控制：该接口启用 If-Match 乐观锁（基于 rowVersion/ETag）。
+      operationId: postPaymentsByPaymentIdReverse
   /files/presign-upload:
     post:
       tags:
@@ -4391,6 +4437,8 @@ paths:
           $ref: '#/components/responses/InternalError500'
       x-rate-limit-tier: STANDARD
       x-error-strategy: 403/404
+      operationId: postFilesPresignUpload
+      description: 获取直传对象存储的签名上传 URL（推荐）
   /files/complete-upload:
     post:
       tags:
@@ -4431,6 +4479,8 @@ paths:
           $ref: '#/components/responses/InternalError500'
       x-rate-limit-tier: STANDARD
       x-error-strategy: 403/404
+      operationId: postFilesCompleteUpload
+      description: 完成上传并落库 Document 元数据
   /documents:
     get:
       tags:
@@ -4498,6 +4548,8 @@ paths:
           $ref: '#/components/responses/InternalError500'
       x-rate-limit-tier: STANDARD
       x-error-strategy: 403/404
+      operationId: getDocuments
+      description: 查询文档列表（按可见性+权限过滤）
   /documents/{docId}:
     get:
       tags:
@@ -4540,6 +4592,8 @@ paths:
           $ref: '#/components/responses/InternalError500'
       x-rate-limit-tier: STANDARD
       x-error-strategy: 403/404
+      operationId: getDocumentsByDocId
+      description: 获取文档元数据（含短期 downloadUrl）
     patch:
       tags:
       - Files
@@ -4604,6 +4658,7 @@ paths:
       x-audit-action: DOCUMENT_UPDATE
       x-error-strategy: 403/404
       description: 并发控制：该接口启用 If-Match 乐观锁（基于 rowVersion/ETag）。
+      operationId: patchDocumentsByDocId
   /documents/{docId}/download:
     get:
       tags:
@@ -4648,6 +4703,7 @@ paths:
       x-audit-action: DOCUMENT_DOWNLOAD
       x-error-strategy: 403/404
       description: 仅当 Document.scanStatus=READY 时可下载/重定向；否则返回 409 Conflict。
+      operationId: getDocumentsByDocIdDownload
   /notifications:
     get:
       tags:
@@ -4685,6 +4741,8 @@ paths:
           $ref: '#/components/responses/InternalError500'
       x-rate-limit-tier: STANDARD
       x-error-strategy: 403/404
+      operationId: getNotifications
+      description: 查询通知（按可见性与权限过滤）
   /notifications/{notificationId}:
     patch:
       tags:
@@ -4743,6 +4801,7 @@ paths:
       x-rate-limit-tier: STANDARD
       x-error-strategy: '403'
       description: 并发控制：该接口启用 If-Match 乐观锁（基于 rowVersion/ETag）。
+      operationId: patchNotificationsByNotificationId
   /notifications/read-all:
     post:
       tags:
@@ -4766,6 +4825,8 @@ paths:
           $ref: '#/components/responses/InternalError500'
       x-rate-limit-tier: STANDARD
       x-error-strategy: '403'
+      operationId: postNotificationsReadAll
+      description: 全部标为已读
   /document-requests:
     get:
       tags:
@@ -4813,6 +4874,8 @@ paths:
           $ref: '#/components/responses/InternalError500'
       x-rate-limit-tier: STANDARD
       x-error-strategy: 403/404
+      operationId: getDocumentRequests
+      description: 查询资料请求（Tenant/Owner/Admin）
     post:
       tags:
       - Doc Requests
@@ -4854,6 +4917,8 @@ paths:
       x-audit: true
       x-audit-action: DOCREQ_CREATE
       x-error-strategy: 403/404
+      operationId: postDocumentRequests
+      description: 创建资料请求（Admin）
   /document-requests/{requestId}:
     get:
       tags:
@@ -4896,6 +4961,8 @@ paths:
           $ref: '#/components/responses/InternalError500'
       x-rate-limit-tier: STANDARD
       x-error-strategy: 403/404
+      operationId: getDocumentRequestsByRequestId
+      description: 获取资料请求详情
     patch:
       tags:
       - Doc Requests
@@ -4950,6 +5017,7 @@ paths:
       x-audit-action: DOCREQ_UPDATE
       x-error-strategy: 403/404
       description: 并发控制：该接口启用 If-Match 乐观锁（基于 rowVersion/ETag）。
+      operationId: patchDocumentRequestsByRequestId
   /document-requests/{requestId}/submit:
     post:
       tags:
@@ -5012,6 +5080,7 @@ paths:
       x-audit-action: DOCREQ_SUBMIT
       x-error-strategy: 403/404
       description: 并发控制：该接口启用 If-Match 乐观锁（基于 rowVersion/ETag）。
+      operationId: postDocumentRequestsByRequestIdSubmit
   /document-requests/{requestId}/approve:
     post:
       tags:
@@ -5059,6 +5128,7 @@ paths:
       x-audit-action: DOCREQ_DECIDE
       x-error-strategy: 403/404
       description: 并发控制：该接口启用 If-Match 乐观锁（基于 rowVersion/ETag）。
+      operationId: postDocumentRequestsByRequestIdApprove
   /document-requests/{requestId}/reject:
     post:
       tags:
@@ -5118,6 +5188,7 @@ paths:
       x-audit-action: DOCREQ_DECIDE
       x-error-strategy: 403/404
       description: 并发控制：该接口启用 If-Match 乐观锁（基于 rowVersion/ETag）。
+      operationId: postDocumentRequestsByRequestIdReject
   /document-requests/{requestId}/waive:
     post:
       tags:
@@ -5165,6 +5236,7 @@ paths:
       x-audit-action: DOCREQ_DECIDE
       x-error-strategy: 403/404
       description: 并发控制：该接口启用 If-Match 乐观锁（基于 rowVersion/ETag）。
+      operationId: postDocumentRequestsByRequestIdWaive
   /applications:
     get:
       tags:
@@ -5202,6 +5274,8 @@ paths:
           $ref: '#/components/responses/InternalError500'
       x-rate-limit-tier: STANDARD
       x-error-strategy: 403/404
+      operationId: getApplications
+      description: 查询申请流程（Tenant/Admin）
     post:
       tags:
       - Applications
@@ -5241,6 +5315,8 @@ paths:
       x-audit: true
       x-audit-action: APPLICATION_CREATE
       x-error-strategy: 403/404
+      operationId: postApplications
+      description: 创建申请（Admin/CRM）
   /applications/{applicationId}:
     get:
       tags:
@@ -5279,6 +5355,8 @@ paths:
           $ref: '#/components/responses/InternalError500'
       x-rate-limit-tier: STANDARD
       x-error-strategy: 403/404
+      operationId: getApplicationsByApplicationId
+      description: 获取申请详情
     patch:
       tags:
       - Applications
@@ -5333,6 +5411,7 @@ paths:
       x-audit-action: APPLICATION_UPDATE
       x-error-strategy: 403/404
       description: 并发控制：该接口启用 If-Match 乐观锁（基于 rowVersion/ETag）。
+      operationId: patchApplicationsByApplicationId
   /applications/{applicationId}/match-proposals:
     get:
       tags:
@@ -5368,6 +5447,8 @@ paths:
           $ref: '#/components/responses/InternalError500'
       x-rate-limit-tier: STANDARD
       x-error-strategy: 403/404
+      operationId: getApplicationsByApplicationIdMatchProposals
+      description: 获取某申请的匹配提案
     post:
       tags:
       - Applications
@@ -5414,6 +5495,8 @@ paths:
       x-audit: true
       x-audit-action: MATCH_PROPOSAL_CREATE
       x-error-strategy: 403/404
+      operationId: postApplicationsByApplicationIdMatchProposals
+      description: 创建匹配提案（Admin）
   /match-proposals/{proposalId}/respond:
     post:
       tags:
@@ -5476,6 +5559,7 @@ paths:
       x-audit-action: MATCH_PROPOSAL_CREATE
       x-error-strategy: 403/404
       description: 并发控制：该接口启用 If-Match 乐观锁（基于 rowVersion/ETag）。
+      operationId: postMatchProposalsByProposalIdRespond
   /health:
     get:
       tags:
@@ -5497,6 +5581,7 @@ paths:
           $ref: '#/components/responses/InternalError500'
       x-rate-limit-tier: STANDARD
       x-error-strategy: '400'
+      operationId: getHealth
   /invitations:
     post:
       tags:
@@ -5535,6 +5620,7 @@ paths:
       x-audit: true
       x-audit-action: INVITATION_CREATE
       x-error-strategy: 403/404
+      operationId: postInvitations
   /invitations/{token}/accept:
     post:
       tags:
@@ -5564,6 +5650,7 @@ paths:
       x-audit: true
       x-audit-action: INVITATION_ACCEPT
       x-error-strategy: '400'
+      operationId: postInvitationsByTokenAccept
   /gdpr/export:
     post:
       tags:
@@ -5602,6 +5689,7 @@ paths:
       x-audit: true
       x-audit-action: GDPR_EXPORT
       x-error-strategy: 403/404
+      operationId: postGdprExport
   /gdpr/erase:
     post:
       tags:
@@ -5640,14 +5728,15 @@ paths:
       x-audit: true
       x-audit-action: GDPR_ERASE
       x-error-strategy: 403/404
+      operationId: postGdprErase
   /properties/{propertyId}/images:
     post:
       tags:
       - Files
       - Core
       summary: 上传房源图片（对齐验收，兼容）
-      description: 建议优先走 `/files/presign-upload` + `/files/complete-upload`（signed
-        URL）。本接口仅用于兼容旧流程/验收口径：最终落库为 Document(docType=PropertyImage, propertyId=...)。
+      description: 建议优先走 `/files/presign-upload` + `/files/complete-upload`（signed URL）。本接口仅用于兼容旧流程/验收口径：最终落库为 Document(docType=PropertyImage,
+        propertyId=...)。
       security:
       - sessionCookie: []
         csrfToken: []
@@ -5711,6 +5800,7 @@ paths:
       x-audit: true
       x-audit-action: PROPERTY_IMAGE_UPLOAD
       x-error-strategy: 403/404
+      operationId: postPropertiesByPropertyIdImages
   /gdpr/jobs/{jobId}:
     get:
       tags:
@@ -5748,13 +5838,13 @@ paths:
       x-audit: false
       x-audit-action: GDPR_JOB_GET
       x-error-strategy: 403/404
+      operationId: getGdprJobsByJobId
   /auth/refresh:
     post:
       tags:
       - Auth & Profile
       summary: 刷新会话（轮换 refresh cookie）
-      description: 使用 refresh cookie 轮换并重新签发 session cookie（Set-Cookie）。建议前端在 401
-        时触发刷新或在会话临近过期时静默刷新。
+      description: 使用 refresh cookie 轮换并重新签发 session cookie（Set-Cookie）。建议前端在 401 时触发刷新或在会话临近过期时静默刷新。
       security:
       - refreshCookie: []
         csrfToken: []
@@ -5779,13 +5869,13 @@ paths:
       x-audit: false
       x-audit-action: AUTH_REFRESH
       x-error-strategy: '400'
+      operationId: postAuthRefresh
   /auth/logout:
     post:
       tags:
       - Auth & Profile
       summary: 退出登录（清除 session/refresh）
-      description: 服务端撤销会话并清除 session/refresh cookie（Set-Cookie Max-Age=0）。即使当前会话已失效，也建议返回
-        ok（幂等）。
+      description: 服务端撤销会话并清除 session/refresh cookie（Set-Cookie Max-Age=0）。即使当前会话已失效，也建议返回 ok（幂等）。
       security:
       - sessionCookie: []
         csrfToken: []
@@ -5810,6 +5900,7 @@ paths:
       x-audit: true
       x-audit-action: AUTH_LOGOUT
       x-error-strategy: '400'
+      operationId: postAuthLogout
   /gdpr/jobs:
     get:
       tags:
@@ -5881,3 +5972,4 @@ paths:
       x-audit: false
       x-audit-action: GDPR_JOB_LIST
       x-error-strategy: 403/404
+      operationId: getGdprJobs

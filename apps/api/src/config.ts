@@ -2,10 +2,13 @@ import process from "node:process";
 
 export type AppEnv = "dev" | "staging" | "prod";
 
-function required(name: string): string {
-  const v = process.env[name];
-  if (!v) throw new Error(`Missing env: ${name}`);
-  return v;
+export type CookieSameSite = "lax" | "strict" | "none";
+
+function parseSameSite(v?: string): CookieSameSite {
+  // fastify-cookie uses lowercase variants: 'lax' | 'strict' | 'none'
+  const s = (v || "lax").trim().toLowerCase();
+  if (s === "lax" || s === "strict" || s === "none") return s;
+  return "lax";
 }
 
 export const config = {
@@ -14,15 +17,21 @@ export const config = {
 
   requestIdHeader: process.env.REQUEST_ID_HEADER || "X-Request-Id",
 
-  databaseUrl: process.env.DATABASE_URL || "",
+  // DB
+  // - 本地/CI：通常用 DATABASE_URL
+  // - Cloud Run/Secret Manager：不少团队习惯用 DB_URL
+  databaseUrl: process.env.DATABASE_URL || process.env.DB_URL || "",
+
+  // CORS (comma separated origins)
+  frontendOrigins: (process.env.FRONTEND_ORIGINS || "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean),
 
   // Cookie
   cookieSecure: (process.env.COOKIE_SECURE || "true").toLowerCase() === "true",
   cookieDomain: process.env.COOKIE_DOMAIN || undefined,
-  cookieSameSite: (process.env.COOKIE_SAMESITE || "Lax") as
-    | "Lax"
-    | "Strict"
-    | "None",
+  cookieSameSite: parseSameSite(process.env.COOKIE_SAMESITE),
 
   sessionCookieName: process.env.SESSION_COOKIE_NAME || "session",
   refreshCookieName: process.env.REFRESH_COOKIE_NAME || "refresh",
@@ -34,4 +43,15 @@ export const config = {
 
   sessionTtlSeconds: Number(process.env.SESSION_TTL_SECONDS || 60 * 60 * 24 * 14), // 14d
   refreshTtlSeconds: Number(process.env.REFRESH_TTL_SECONDS || 60 * 60 * 24 * 30), // 30d
+
+  // Files / Signed URL
+  storageProvider: (process.env.STORAGE_PROVIDER || "local") as "local" | "gcs",
+  gcsBucketPrivate: process.env.GCS_BUCKET_PRIVATE || process.env.GCS_BUCKET || "",
+  signedUrlTtlSeconds: Number(process.env.SIGNED_URL_TTL_SECONDS || 300),
+  fileMaxSizeMb: Number(process.env.FILE_MAX_SIZE_MB || 25),
+  allowedMimeTypes: (process.env.ALLOWED_MIME_TYPES || "application/pdf,image/jpeg,image/png,image/webp")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean),
+  fileScanEnabled: (process.env.FILE_SCAN_ENABLED || "true").toLowerCase() === "true",
 };

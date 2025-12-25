@@ -10,6 +10,7 @@ services:
       - "5432:5432"
     volumes:
       - dbdata:/var/lib/postgresql/data
+      - ./infra/db/seed:/seed:ro
 
   flyway:
     image: flyway/flyway:10
@@ -17,7 +18,7 @@ services:
     command: -configFiles=/flyway/conf/flyway.conf migrate
     volumes:
       - ./infra/db/flyway:/flyway/sql
-      - ./infra/db/flyway.conf.example:/flyway/conf/flyway.conf:ro
+      - ./infra/db/flyway.conf.docker:/flyway/conf/flyway.conf:ro
     profiles: ["tools"]
 
 volumes:

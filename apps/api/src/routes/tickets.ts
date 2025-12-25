@@ -1,7 +1,7 @@
 import type { FastifyInstance } from "fastify";
-import { sendOk, sendErr } from "../envelope.js";
+import { sendOk } from "../envelope.js";
 import { ApiError } from "../errors.js";
-import { withOrg } from "../db/db.js";
+import { withCtx } from "../db/db.js";
 
 /**
  * 并发控制示例（If-Match/ETag）：
@@ -16,13 +16,21 @@ export async function registerTickets(app: FastifyInstance) {
 
     const { ticketId } = req.params as any;
 
-    const row = await withOrg(req.user.orgId, async (client) => {
+    const row = await withCtx(
+      {
+        orgId: req.user.orgId,
+        userId: req.user.userId,
+        role: req.user.roles[0],
+        requestId: req.id,
+      },
+      async (client) => {
       const { rows } = await client.query(
         "select id, org_id, status, title, description, row_version, created_at, updated_at from tickets where id = $1",
         [ticketId]
       );
       return rows[0];
-    });
+    }
+    );
 
     if (!row) throw new ApiError(404, "NOT_FOUND", "Ticket not found");
 
@@ -46,7 +54,14 @@ export async function registerTickets(app: FastifyInstance) {
     const nextTitle = body.title as string | undefined;
     const nextDescription = body.description as string | undefined;
 
-    const updated = await withOrg(req.user.orgId, async (client) => {
+    const updated = await withCtx(
+      {
+        orgId: req.user.orgId,
+        userId: req.user.userId,
+        role: req.user.roles[0],
+        requestId: req.id,
+      },
+      async (client) => {
       const { rows } = await client.query(
         `update tickets
          set status = coalesce($2, status),
@@ -59,15 +74,24 @@ export async function registerTickets(app: FastifyInstance) {
         [ticketId, nextStatus, nextTitle, nextDescription, expected]
       );
       return rows[0];
-    });
+      }
+    );
 
     if (!updated) {
       // 可能是：找不到（RLS）或 row_version 冲突
       // 再查一次判断（演示用；真实项目可优化）
-      const current = await withOrg(req.user.orgId, async (client) => {
+      const current = await withCtx(
+        {
+          orgId: req.user.orgId,
+          userId: req.user.userId,
+          role: req.user.roles[0],
+          requestId: req.id,
+        },
+        async (client) => {
         const { rows } = await client.query("select row_version from tickets where id=$1", [ticketId]);
         return rows[0];
-      });
+        }
+      );
       if (!current) throw new ApiError(404, "NOT_FOUND", "Ticket not found");
       throw new ApiError(412, "PRECONDITION_FAILED", "ETag stale");
     }
