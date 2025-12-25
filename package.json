@@ -9,9 +9,10 @@
     "openapi:lint": "bash ./scripts/openapi_lint.sh"
   },
   "devDependencies": {
-    "@types/node": "^20.11.0",
-    "eslint": "^8.57.0",
-    "@typescript-eslint/eslint-plugin": "^7.0.0",
-    "@typescript-eslint/parser": "^7.0.0"
-  }
+  "@types/node": "^20.11.0",
+  "eslint": "^8.57.0",
+  "@typescript-eslint/eslint-plugin": "^7.0.0",
+  "@typescript-eslint/parser": "^7.0.0",
+  "@stoplight/spectral-cli": "^6.13.0"
+}
 }
