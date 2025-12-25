@@ -71,16 +71,16 @@ export async function registerFiles(app: FastifyInstance) {
     const uploadId = uuidv4();
     const token = crypto.randomBytes(16).toString("hex");
 
-    const objectKey = `org/${req.user.orgId}/documents/${docId}/${fileName}`;
+    const objectKey = `org/${req.user!.orgId}/documents/${docId}/${fileName}`;
     const bucket = config.storageProvider === "gcs" ? config.gcsBucketPrivate : "local";
 
     const expiresMs = Date.now() + config.signedUrlTtlSeconds * 1000;
     const expiresAt = new Date(expiresMs).toISOString();
 
     const ctx = {
-      orgId: req.user.orgId,
-      userId: req.user.userId,
-      role: req.user.roles?.[0],
+      orgId: req.user!.orgId,
+      userId: req.user!.userId,
+      role: req.user!.roles?.[0],
       requestId: req.id,
     };
 
@@ -98,7 +98,7 @@ export async function registerFiles(app: FastifyInstance) {
          on conflict (id) do nothing`,
         [
           docId,
-          req.user.orgId,
+          req.user!.orgId,
           fileName,
           docType,
           visibility,
@@ -116,7 +116,7 @@ export async function registerFiles(app: FastifyInstance) {
           objectKey,
           expiresAtDate,
           sha256,
-          req.user.userId,
+          req.user!.userId,
           config.storageProvider,
         ]
       );
@@ -126,7 +126,7 @@ export async function registerFiles(app: FastifyInstance) {
         `insert into file_uploads(id, org_id, doc_id, bucket, object_key, mime, size, token, expires_at)
          values ($1,$2,$3,$4,$5,$6,$7,$8,to_timestamp($9/1000.0))
          on conflict (id) do nothing`,
-        [uploadId, req.user.orgId, docId, bucket, objectKey, mime, size, token, expiresMs]
+        [uploadId, req.user!.orgId, docId, bucket, objectKey, mime, size, token, expiresMs]
       );
 
       // 3) generate upload url
@@ -148,9 +148,9 @@ export async function registerFiles(app: FastifyInstance) {
       }
 
       await writeAudit(client, {
-        orgId: req.user.orgId,
+        orgId: req.user!.orgId,
         requestId: req.id,
-        actorUserId: req.user.userId,
+        actorUserId: req.user!.userId,
         action: "DOCUMENT_PRESIGN_UPLOAD",
         entityType: "document",
         entityId: docId,
@@ -188,9 +188,9 @@ export async function registerFiles(app: FastifyInstance) {
     if (!token) throw new ApiError(403, "FORBIDDEN", "Missing x-upload-token");
 
     const ctx = {
-      orgId: req.user.orgId,
-      userId: req.user.userId,
-      role: req.user.roles?.[0],
+      orgId: req.user!.orgId,
+      userId: req.user!.userId,
+      role: req.user!.roles?.[0],
       requestId: req.id,
     };
 
@@ -251,9 +251,9 @@ export async function registerFiles(app: FastifyInstance) {
     if (!uploadId || !docId) throw new ApiError(400, "BAD_REQUEST", "uploadId and docId required");
 
     const ctx = {
-      orgId: req.user.orgId,
-      userId: req.user.userId,
-      role: req.user.roles?.[0],
+      orgId: req.user!.orgId,
+      userId: req.user!.userId,
+      role: req.user!.roles?.[0],
       requestId: req.id,
     };
 
@@ -303,14 +303,14 @@ export async function registerFiles(app: FastifyInstance) {
           `insert into file_scan_jobs(org_id, doc_id, status)
            values ($1,$2,'PENDING')
            on conflict (doc_id) do update set status='PENDING', updated_at=now()`,
-          [req.user.orgId, docId]
+          [req.user!.orgId, docId]
         );
       }
 
       await writeAudit(client, {
-        orgId: req.user.orgId,
+        orgId: req.user!.orgId,
         requestId: req.id,
-        actorUserId: req.user.userId,
+        actorUserId: req.user!.userId,
         action: "DOCUMENT_COMPLETE_UPLOAD",
         entityType: "document",
         entityId: docId,
@@ -352,9 +352,9 @@ export async function registerFiles(app: FastifyInstance) {
     const { docId } = req.params as any;
 
     const ctx = {
-      orgId: req.user.orgId,
-      userId: req.user.userId,
-      role: req.user.roles?.[0],
+      orgId: req.user!.orgId,
+      userId: req.user!.userId,
+      role: req.user!.roles?.[0],
       requestId: req.id,
     };
 

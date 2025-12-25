@@ -1,12 +1,52 @@
 <!doctype html>
 <html lang="zh-CN">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>homepage (placeholder)</title>
-  </head>
-  <body>
-    <h1>homepage (placeholder)</h1>
-    <p>把你的前端代码迁移到 apps/homepage/。并确保构建输出根目录含 _headers 文件。</p>
-  </body>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>AICASA · Homepage</title>
+
+  <!-- 从 Pages Function 注入 API_BASE_URL -->
+  <script src="/config.js"></script>
+
+  <style>
+    body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial; margin:0; padding:32px;}
+    .card{border:1px solid #eee; border-radius:12px; padding:16px; max-width:900px;}
+    code{background:#f6f6f6; padding:2px 6px; border-radius:6px;}
+    .ok{color:#1a7f37;} .bad{color:#b42318;}
+  </style>
+</head>
+<body>
+  <h1>AICASA Homepage</h1>
+  <p>这是一个“先跑起来”的最小主页（后面再换成你的真实 UI）。</p>
+
+  <div class="card">
+    <h3>Backend 状态</h3>
+    <div>API_BASE_URL: <code id="apiBase">(loading...)</code></div>
+    <div>Health: <strong id="health">(loading...)</strong></div>
+  </div>
+
+  <script>
+    const api = window.__APP_CONFIG__?.API_BASE_URL || "";
+    document.getElementById("apiBase").textContent = api || "(empty)";
+
+    async function check() {
+      if (!api) {
+        document.getElementById("health").textContent = "API_BASE_URL 未注入（请检查 Pages Variables）";
+        document.getElementById("health").className = "bad";
+        return;
+      }
+      try {
+        const r = await fetch(api + "/v1/health");
+        await r.json();
+        document.getElementById("health").textContent = "OK";
+        document.getElementById("health").className = "ok";
+      } catch (e) {
+        document.getElementById("health").textContent = "FAILED（见 Console）";
+        document.getElementById("health").className = "bad";
+        console.error(e);
+      }
+    }
+    check();
+  </script>
+</body>
 </html>
