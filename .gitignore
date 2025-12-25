@@ -6,3 +6,9 @@ build
 .env.*
 *.log
 coverage
+
+# --- local temp / debug files ---
+cookies.txt
+*.json
+test.pdf
+*.pdf
