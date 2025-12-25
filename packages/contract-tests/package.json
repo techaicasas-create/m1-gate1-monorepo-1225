@@ -1,0 +1,19 @@
+{
+  "name": "@aicasa/contract-tests",
+  "private": true,
+  "type": "module",
+  "version": "0.0.0",
+  "scripts": {
+    "test": "vitest run",
+    "lint": "echo \"(TODO) lint\"",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "vitest": "^1.6.0",
+    "pg": "^8.12.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.0",
+    "@types/node": "^20.11.0"
+  }
+}

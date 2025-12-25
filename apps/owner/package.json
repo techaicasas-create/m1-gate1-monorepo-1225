@@ -1,0 +1,9 @@
+{
+  "name": "@aicasa/owner",
+  "private": true,
+  "scripts": {
+    "lint": "echo \"(TODO) add lint for apps/owner\"",
+    "typecheck": "echo \"(TODO) add typecheck for apps/owner\"",
+    "test": "echo \"(TODO) add tests for apps/owner\""
+  }
+}

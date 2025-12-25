@@ -1,0 +1,10 @@
+# Cloudflare Pages _headers（Gate1 安全头基线）
+# 注意：CSP 需要按实际资源域名调整（API / Sentry / CDN 等）
+
+/*
+  Strict-Transport-Security: max-age=31536000; includeSubDomains; preload
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: strict-origin-when-cross-origin
+  Permissions-Policy: geolocation=(), microphone=(), camera=()
+  X-Frame-Options: DENY
+  Content-Security-Policy: default-src 'self'; frame-ancestors 'none'; object-src 'none'; base-uri 'self'

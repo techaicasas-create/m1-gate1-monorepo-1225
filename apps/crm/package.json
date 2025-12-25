@@ -1,0 +1,9 @@
+{
+  "name": "@aicasa/crm",
+  "private": true,
+  "scripts": {
+    "lint": "echo \"(TODO) add lint for apps/crm\"",
+    "typecheck": "echo \"(TODO) add typecheck for apps/crm\"",
+    "test": "echo \"(TODO) add tests for apps/crm\""
+  }
+}

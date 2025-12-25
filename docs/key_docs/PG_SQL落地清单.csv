@@ -1,0 +1,17 @@
+﻿Table/Entity,用途,必须org_id,RLS,主键/唯一约束,关键外键,审计字段,PII,推荐索引,备注
+orgs,组织/租户,-,-,id (uuid) unique,-,"created_at,updated_at",N,unique(slug),多租户根实体
+users,系统用户,Y,Y,"id (uuid), unique(email,org_id)",org_id->orgs,"created_at,updated_at,last_login_at",Y,"idx(org_id), idx(email)",Admin/Staff/Owner/Tenant 统一用户表
+roles,角色定义,Y,Y,"id, unique(name,org_id)",org_id->orgs,created_at,N,idx(org_id),
+user_roles,用户角色绑定,Y,Y,"unique(user_id,role_id)","user_id->users, role_id->roles",created_at,N,"idx(user_id), idx(role_id)",
+parties,联系人/主体（房东/租客/供应商）,Y,Y,"id, unique(external_ref,org_id)",org_id->orgs,"created_at,updated_at",Y,"idx(org_id), idx(type), idx(email)",用于CRM去重与统一实体
+properties,房源,Y,Y,"id, unique(org_id,ref_code)",org_id->orgs,"created_at,updated_at,version",N,"idx(org_id), idx(status), idx(city)",version用于乐观锁
+property_parties,房源-主体关系,Y,Y,"unique(property_id,party_id,role)","property_id->properties, party_id->parties",created_at,N,"idx(property_id), idx(party_id)",
+applications,租赁申请/线索转化,Y,Y,id,"property_id->properties, tenant_party_id->parties","created_at,updated_at",Y,"idx(property_id), idx(status)",从web_leads转化
+leases,租约,Y,Y,"id, unique(org_id,lease_code)","property_id->properties, owner_party_id, tenant_party_id","created_at,updated_at,version",Y,"idx(org_id), idx(property_id), idx(status)",
+invoices,账单/应收应付,Y,Y,id,"lease_id->leases (nullable), party_id->parties","created_at,updated_at,version",Y,"idx(org_id), idx(due_date), idx(status)",
+payments,收付款流水,Y,Y,id,invoice_id->invoices (nullable),"created_at,updated_at",Y,"idx(org_id), idx(paid_at)",
+documents,文件元数据（合同/凭证/图片）,Y,Y,id,"linked_entity_type/id, uploaded_by->users","created_at,updated_at",Y,"idx(org_id), idx(entity_type,entity_id), idx(status)",status=SCANNING/READY/BLOCKED
+tickets,工单,Y,Y,id,"linked_entity_type/id, created_by->users","created_at,updated_at,version",Y,"idx(org_id), idx(status), idx(priority)",
+audit_log,审计日志（append-only）,Y,Y,id,actor_user_id->users,created_at,Y,"idx(org_id), idx(event_name), idx(created_at)",关键动作必须写入
+web_leads,官网线索（房东/租客）,Y,Y,id,org_id->orgs,created_at,Y,"idx(org_id), idx(type), idx(created_at)",CRM 导入/去重来源
+translations,UGC翻译缓存,Y,Y,id,entity_type/id,"created_at,updated_at",N,"idx(org_id), idx(entity_type,entity_id)",多语言展示

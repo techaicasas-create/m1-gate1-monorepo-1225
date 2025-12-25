@@ -1,0 +1,37 @@
+﻿类别(Public/Secret/Runtime),变量名/Key,说明,涉及端(Home/CRM/Admin/Tenant/Owner/API),作用域(DEV/STAGING/PROD),DEV 值,STAGING 值,PROD 值,是否敏感(Y/N),存储位置(Pages env/Cloud Run env/Secret Manager),轮换/更新,验证方式,备注
+Runtime,APP_ENV,运行环境标识,All,DEV/STAGING/PROD,dev,staging,prod,N,Pages env / Cloud Run env,发布时,页面/日志显示,
+Public,API_BASE_URL,统一后端 API 域名（含 /v1）,All,DEV/STAGING/PROD,https://api-dev.example.com/v1,https://api-stg.example.com/v1,https://api.example.com/v1,N,Pages env,按环境,GET /v1/health,
+Public,FRONTEND_ORIGINS,允许的前端域名白名单（CORS）,API,DEV/STAGING/PROD,"https://dev.example.com,https://crm-dev.example.com,https://admin-dev.example.com,https://tenant-dev.example.com,https://owner-dev.example.com","https://stg.example.com,https://crm-stg.example.com,https://admin-stg.example.com,https://tenant-stg.example.com,https://owner-stg.example.com","https://example.com,https://crm.example.com,https://admin.example.com,https://tenant.example.com,https://owner.example.com",N,Cloud Run env,按需,预检 OPTIONS 通过,与 WAF 规则一致
+Runtime,REQUEST_ID_HEADER,请求追踪 header 名称,API,DEV/STAGING/PROD,X-Request-Id,X-Request-Id,X-Request-Id,N,Cloud Run env,不变,每次响应含 requestId,
+Runtime,LOG_LEVEL,日志等级,API,DEV/STAGING/PROD,debug,info,info,N,Cloud Run env,按需,日志采样,生产禁止 debug+PII
+Runtime,ENABLE_ENVELOPE,是否启用统一响应 Envelope,API,DEV/STAGING/PROD,true,true,true,N,Cloud Run env,不变,响应包含 requestId/timestamp,
+Runtime,ENABLE_RLS,数据库是否启用 RLS,API,STAGING/PROD,false,true,true,N,Cloud Run env,按需,跨 org 查询被阻断,DEV 可关闭便于调试
+Runtime,GCP_REGION,部署区域（Spain/EU）,API,STAGING/PROD,europe-southwest1,europe-southwest1,europe-southwest1,N,Cloud Run env,不变,Cloud Run region,Madrid
+Secret,DB_URL,Cloud SQL Postgres 连接串,API,DEV/STAGING/PROD,Secret Manager:DB_URL_DEV,Secret Manager:DB_URL_STG,Secret Manager:DB_URL_PROD,Y,Secret Manager,按需/泄露即轮换,API 能读写数据,
+Runtime,DB_POOL_SIZE,数据库连接池大小,API,DEV/STAGING/PROD,5,10,20,N,Cloud Run env,按需,压测/监控,
+Secret,IDP_TENANT_CONFIG,Identity Platform 多租户配置/项目,API,STAGING/PROD,Secret Manager:IDP_TENANT_CONFIG_STG,Secret Manager:IDP_TENANT_CONFIG_STG,Secret Manager:IDP_TENANT_CONFIG_PROD,Y,Secret Manager,按需,登录可用,
+Runtime,SESSION_TTL_SECONDS,会话有效期,API,STAGING/PROD,1209600,1209600,1209600,N,Cloud Run env,按需,cookie 过期时间,14天
+Runtime,COOKIE_DOMAIN,cookie 域名共享,API,STAGING/PROD,.example.com,.example.com,.example.com,N,Cloud Run env,按需,跨子域登录态共享,
+Runtime,COOKIE_SAMESITE,SameSite 策略,API,STAGING/PROD,Lax,Lax,Lax,N,Cloud Run env,按需,登录/接口正常,
+Secret,CSRF_SECRET,CSRF 签名密钥,API,STAGING/PROD,Secret Manager:CSRF_SECRET_STG,Secret Manager:CSRF_SECRET_STG,Secret Manager:CSRF_SECRET_PROD,Y,Secret Manager,90天/按需,提交请求通过 CSRF 校验,
+Secret,TURNSTILE_SECRET,Turnstile 服务端密钥,API,STAGING/PROD,Secret Manager:TURNSTILE_SECRET_DEV,Secret Manager:TURNSTILE_SECRET_STG,Secret Manager:TURNSTILE_SECRET_PROD,Y,Secret Manager,90天/按需,线索/登录校验通过,
+Public,TURNSTILE_SITEKEY,Turnstile 前端 sitekey,Homepage,DEV/STAGING/PROD,dev-sitekey,stg-sitekey,prod-sitekey,N,Pages env,按需,验证码可渲染,替换为真实值
+Secret,GCS_BUCKET_PRIVATE,私有桶（存合同/凭证/图片）,API,DEV/STAGING/PROD,Secret Manager:GCS_BUCKET_PRIVATE_DEV,Secret Manager:GCS_BUCKET_PRIVATE_STG,Secret Manager:GCS_BUCKET_PRIVATE_PROD,Y,Secret Manager,按需,signed URL 上传下载可用,桶需 EU/Spain
+Runtime,SIGNED_URL_TTL_SECONDS,下载/上传签名URL有效期,API,DEV/STAGING/PROD,300,300,300,N,Cloud Run env,按需,URL 5分钟失效,
+Runtime,FILE_MAX_SIZE_MB,单文件最大大小,API,DEV/STAGING/PROD,25,25,25,N,Cloud Run env,按需,超限返回 413/400,
+Runtime,ALLOWED_MIME_TYPES,允许上传的 MIME 白名单,API,DEV/STAGING/PROD,"application/pdf,image/jpeg,image/png,image/webp","application/pdf,image/jpeg,image/png,image/webp","application/pdf,image/jpeg,image/png,image/webp",N,Cloud Run env,按需,非法类型返回 400,
+Runtime,FILE_SCAN_ENABLED,是否启用扫描流程,API,DEV/STAGING/PROD,true,true,true,N,Cloud Run env,按需,上传后 status=SCANNING,
+Secret,CLAMAV_HOST,ClamAV 扫描服务 host（如启用）,API,STAGING/PROD,Secret Manager:CLAMAV_HOST_STG,Secret Manager:CLAMAV_HOST_STG,Secret Manager:CLAMAV_HOST_PROD,Y,Secret Manager,按需,EICAR 测试被阻断,
+Runtime,CLAMAV_PORT,ClamAV 端口,API,STAGING/PROD,3310,3310,3310,N,Cloud Run env,按需,扫描成功,
+Runtime,RATE_LIMIT_LEAD_RPM,线索提交限流（每分钟）,API,DEV/STAGING/PROD,60,30,20,N,Cloud Run env,按需,超限返回 429,HIGH_RISK
+Runtime,RATE_LIMIT_LOGIN_RPM,登录/邀请/找回限流（每分钟）,API,STAGING/PROD,20,10,10,N,Cloud Run env,按需,超限返回 429,HIGH_RISK
+Runtime,RATE_LIMIT_UPLOAD_RPM,上传限流（每分钟）,API,STAGING/PROD,60,30,20,N,Cloud Run env,按需,超限返回 429,HIGH_RISK
+Runtime,AUDIT_LOG_RETENTION_DAYS,审计日志保留天数,API,STAGING/PROD,365,365,365,N,Cloud Run env,按需,查询审计日志,
+Secret,SENTRY_DSN,Sentry DSN（前后端）,All,DEV/STAGING/PROD,Secret Manager:SENTRY_DSN_DEV,Secret Manager:SENTRY_DSN_STG,Secret Manager:SENTRY_DSN_PROD,Y,Secret Manager,按需,错误上报可见,
+Runtime,PROTOTYPE_LOCAL_STORAGE_KEYS_ENABLED,是否允许原型 localStorage keys,All,DEV/STAGING/PROD,true,false,false,N,Pages env,不进生产,检查 devtools localStorage,生产必须 false
+Runtime,CORE_DB_V1,LocalCore 存储 key（仅 DEV）,CRM/Admin,DEV,CORE_DB_V1,,,N,(DEV) localStorage,不进生产,同域同端口共享,生产禁用
+Secret,core_api_base,RemoteCore API base（如启用）,CRM/Admin,DEV,https://core-dev.example.com,,,Y,Secret Manager / Pages env,按需,CoreAdapter 远端可用,默认生产不启用
+Secret,core_api_token,RemoteCore API token（如启用）,CRM/Admin,DEV,Secret Manager:CORE_API_TOKEN_DEV,,,Y,Secret Manager,按需,鉴权通过,默认生产不启用
+Secret,bcn_api_base,Homepage/CRM 独立官网 API base（如存在）,Homepage/CRM,DEV,https://bcn-dev.example.com,,,Y,Pages env / Secret Manager,按需,GET properties 正常,默认走统一 API_BASE_URL
+Secret,bcn_api_token,官网 API token（如需要）,Homepage/CRM,DEV,Secret Manager:BCN_API_TOKEN_DEV,,,Y,Secret Manager,按需,鉴权通过,默认不启用
+Runtime,STORAGE_KEY,运营库 localStorage key（仅 DEV）,Admin/Tenant/Owner,DEV,STORAGE_KEY,,,N,(DEV) localStorage,不进生产,同库模拟,生产禁用

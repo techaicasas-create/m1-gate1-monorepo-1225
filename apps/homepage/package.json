@@ -1,0 +1,9 @@
+{
+  "name": "@aicasa/homepage",
+  "private": true,
+  "scripts": {
+    "lint": "echo \"(TODO) add lint for apps/homepage\"",
+    "typecheck": "echo \"(TODO) add typecheck for apps/homepage\"",
+    "test": "echo \"(TODO) add tests for apps/homepage\""
+  }
+}

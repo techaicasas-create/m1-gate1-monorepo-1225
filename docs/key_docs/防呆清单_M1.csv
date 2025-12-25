@@ -1,0 +1,9 @@
+﻿里程碑,优先级,类别,防呆项,加入位置（层/文件）,验收/证据
+M1,P0,错误模型,统一错误响应（error_code/trace_id/details）,ControllerAdvice/GlobalExceptionHandler,400/409/412 样例
+M1,P0,序列化,金额 BigDecimal；对外输出口径（建议 string）；日期 LocalDate,DTO + JacksonConfig + OpenAPI schema,金额精度回归用例
+M1,P0,环境,非 dev 强制 token；CORS 白名单；STAGING/PROD 隔离,Config + 部署清单,隔离截图/配置表
+M1,P0,安全头,Cloudflare Pages 固化安全头：HSTS、CSP、X-Frame-Options/frame-ancestors、X-Content-Type-Options、Referrer-Policy,各前端仓库 _headers,浏览器安全头检查截图；CSP 无 unsafe-inline（除非记录理由）
+M1,P0,CI门禁,CI 必开：依赖漏洞扫描(SCA)+Secret 扫描+基础 SAST；高危必须阻断合并,CI pipeline（GitHub Actions/同类）,扫描报告归档；高危 PR 阻断截图
+M1,P0,会话安全,token 不落 localStorage；使用 HttpOnly+Secure Cookie；refresh rotation；启用 CSRF 防护,Auth middleware + CookieConfig + CSRF,前端代码检查记录；登录/刷新抓包证明 Cookie 属性
+M1,P0,审计,关键操作写审计日志：登录/MFA/下载合同/修改收款/导出等；字段含 org_id/user_id/action/before/after/ip/ua/request_id,AuditLog middleware + DB 表,审计样本导出；能按 requestId 追踪
+M1,P0,日志脱敏,日志/错误输出不得包含 P0/P1 敏感字段（证件号/银行信息/合同全文/手机号等）,Logger + Error handler,抽样检查日志不含敏感字段；脱敏规则文档

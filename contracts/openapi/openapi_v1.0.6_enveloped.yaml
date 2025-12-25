@@ -1,0 +1,5883 @@
+openapi: 3.0.3
+info:
+  title: Hourglass Rentals API
+  version: 1.0.6
+  description: '面向西班牙（Spain）上线的租赁管理平台 API（Admin / Owner / Tenant + Public Website
+    + CRM）。
+
+    本文件是字段级接口“唯一真相源（Source of Truth）”。前后端均以此为准。
+
+
+    约定：
+
+    - 所有需要翻译展示的文本字段同时保留原文（*_original）并提供翻译缓存（*_i18n）与展示字段（*_display）。
+
+    - 服务端根据用户偏好与请求头 Accept-Language 解析 viewerLanguage，并填充 *_display。
+
+    - 所有时间使用 ISO 8601，货币默认 EUR。
+
+
+
+    ---
+
+
+    **M0 冻结说明（2025-12-24）**
+
+    - 生产统一使用 `/v1`（server url 已带 `/v1`）；原 `/api` 仅作为短期兼容（可由网关 rewrite）。
+
+    - 统一响应 Envelope：成功响应为 `{requestId,timestamp,data}`；错误响应为 `{requestId,timestamp,error}`。
+
+
+
+    ### M0-FULL 补丁说明（v1.0.2）
+
+    - 补齐：/health、/invitations、/gdpr、property images upload
+
+    - 安全：补齐通用错误码（401/403/404/429/500）与 Cookie+CSRF 口径
+
+    - 兼容：/api → /v1 下线计划见 `00_RELEASE/API_兼容与下线计划.md`
+
+
+
+    ### M0-SUPER 补丁说明（v1.0.3）
+
+
+    - 新增：`GET /v1/gdpr/jobs/{jobId}`（GDPR job 查询，便于前端轮询）
+
+    - 新增：`POST /v1/auth/refresh`、`POST /v1/auth/logout`（Cookie 会话刷新/退出）
+
+    - 安全：补充 refresh cookie 的可执行表达（`refreshCookie` security scheme）
+
+
+
+    v1.0.4（M0-Ultimate）变更摘要：
+
+    - GDPR：新增历史任务列表/筛选接口 `GET /gdpr/jobs`（支持 type/status/target 过滤 + cursor 分页）。
+
+    - 并发：引入 If-Match / ETag 乐观锁约定（rowVersion 全链路），写接口可选强制门禁（412/428）。
+
+
+    补充：ErrorResponse.error.code 已固定为 ErrorCode 枚举（前后端统一）。
+
+
+    【v1.0.6 重要变更（M0修正）】
+
+    - 金额字段：对外统一使用字符串（MoneyString），避免 JSON number 精度问题；落库使用 NUMERIC(18,2)。
+
+    - Document 新增 scanStatus 字段（UPLOADED/SCANNING/READY/BLOCKED/FAILED）。
+
+    - Public 线索接口：Turnstile 由“建议”提升为“必须”，并在请求体增加 turnstileToken。
+
+    '
+  contact:
+    name: Product Owner (Client)
+servers:
+- url: https://api.example.com/v1
+  description: Production (replace with your domain)
+- url: https://staging-api.example.com/v1
+  description: Staging
+tags:
+- name: Public
+  description: 无需登录的公开接口（房源列表、线索提交）
+- name: Auth & Profile
+  description: 会话、当前用户与偏好（实际登录可能由外部 IdP 负责）
+- name: Core
+  description: 房源/租约/业主/租客等核心数据
+- name: Tickets
+  description: 工单（Tenant/Owner/Admin）
+- name: Billing
+  description: 账单与收款凭证（Invoice/Payment）
+- name: Files
+  description: 文件/文档中心（GCS / R2）
+- name: Notifications
+  description: 通知中心（可见性 + 已读）
+- name: Doc Requests
+  description: 资料请求（申请材料）
+- name: Applications
+  description: 申请流程与匹配（Onboarding）
+- name: Ops
+  description: 运维与健康检查（给 LB/监控用）
+- name: GDPR
+  description: GDPR 最小能力（导出/删除/匿名化），仅 Admin/Staff
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: '建议使用 Google Identity Platform / Firebase Auth / Auth0 等签发 JWT；API
+        侧只做校验与 RBAC。
+
+
+        ⚠️ M0-FULL：浏览器端推荐使用 HttpOnly Cookie 会话（见 sessionCookie + CSRF），Bearer 仅建议用于服务到服务或本地调试。'
+    sessionCookie:
+      type: apiKey
+      in: cookie
+      name: session
+      description: HttpOnly Secure Session Cookie（浏览器端默认认证方式）。
+    csrfToken:
+      type: apiKey
+      in: header
+      name: X-CSRF-Token
+      description: CSRF 防护 token（对所有写接口 POST/PUT/PATCH/DELETE 必须）。
+    refreshCookie:
+      type: apiKey
+      in: cookie
+      name: refresh
+      description: HttpOnly Secure Refresh Cookie（用于会话刷新/轮换）。
+  parameters:
+    AcceptLanguage:
+      name: Accept-Language
+      in: header
+      required: false
+      schema:
+        type: string
+        example: zh-CN,es;q=0.9,en;q=0.8
+      description: 期望返回的展示语言。服务端可结合用户偏好与此头决定 viewerLanguage。
+    LangQuery:
+      name: lang
+      in: query
+      required: false
+      schema:
+        $ref: '#/components/schemas/LanguageCode'
+      description: 显式指定展示语言（优先级高于 Accept-Language）。
+    Limit:
+      name: limit
+      in: query
+      required: false
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 200
+        default: 50
+    Cursor:
+      name: cursor
+      in: query
+      required: false
+      schema:
+        type: string
+      description: 游标分页（不透明字符串，由服务端生成）。
+    IfMatch:
+      name: If-Match
+      in: header
+      required: true
+      schema:
+        type: string
+      description: 乐观锁：客户端从响应头 ETag 获取并在更新/状态变更/删除时通过 If-Match 回传。推荐格式：W/"{rowVersion}".
+  schemas:
+    ErrorCode:
+      type: string
+      description: 统一错误码枚举（用于 ErrorResponse.error.code）。前后端/多端必须保持一致。
+      enum:
+      - VALIDATION_ERROR
+      - BAD_REQUEST
+      - UNAUTHORIZED
+      - FORBIDDEN
+      - NOT_FOUND
+      - CONFLICT
+      - PRECONDITION_REQUIRED
+      - PRECONDITION_FAILED
+      - RATE_LIMITED
+      - INTERNAL_ERROR
+    ErrorResponse:
+      type: object
+      required:
+      - error
+      - requestId
+      - timestamp
+      properties:
+        requestId:
+          type: string
+          description: 请求追踪 ID（用于排障）
+        error:
+          type: object
+          required:
+          - code
+          - message
+          properties:
+            code:
+              $ref: '#/components/schemas/ErrorCode'
+            message:
+              type: string
+            details:
+              type: object
+              additionalProperties: true
+        timestamp:
+          type: string
+          format: date-time
+          description: 服务端生成的响应时间戳
+    LanguageCode:
+      type: string
+      description: 语言代码（最少满足西班牙上线：西语/英语/中文；巴塞可选加泰语）
+      enum:
+      - es
+      - en
+      - zh-CN
+      - ca
+      example: es
+    I18nText:
+      type: object
+      description: 机器翻译缓存结构（用于用户输入文本：工单、通知、资料请求备注等）。
+      required:
+      - originalText
+      - originalLang
+      properties:
+        originalText:
+          type: string
+          maxLength: 20000
+        originalLang:
+          $ref: '#/components/schemas/LanguageCode'
+        translations:
+          type: object
+          description: key=LanguageCode，value=翻译文本
+          additionalProperties:
+            type: string
+            maxLength: 20000
+        displayText:
+          type: string
+          readOnly: true
+          description: 服务端根据 viewerLanguage 解析后的展示文本。
+        provider:
+          type: string
+          description: 翻译供应商/引擎标识（可选）
+        model:
+          type: string
+          description: 模型/版本（可选）
+        confidence:
+          type: number
+          format: float
+          minimum: 0
+          maximum: 1
+        updatedAt:
+          type: string
+          format: date-time
+    UserRole:
+      type: string
+      enum:
+      - ADMIN
+      - OWNER
+      - TENANT
+    UserMe:
+      type: object
+      required:
+      - userId
+      - role
+      - preferredLanguage
+      properties:
+        userId:
+          type: string
+        role:
+          $ref: '#/components/schemas/UserRole'
+        ownerId:
+          type: string
+          nullable: true
+        tenantId:
+          type: string
+          nullable: true
+        displayName:
+          type: string
+        email:
+          type: string
+          format: email
+          nullable: true
+        preferredLanguage:
+          $ref: '#/components/schemas/LanguageCode'
+        viewerLanguage:
+          allOf:
+          - $ref: '#/components/schemas/LanguageCode'
+          readOnly: true
+          description: 最终展示语言（服务端综合偏好 + header 解析结果）。
+        createdAt:
+          type: string
+          format: date-time
+          readOnly: true
+        updatedAt:
+          type: string
+          format: date-time
+          readOnly: true
+    OwnerType:
+      type: string
+      enum:
+      - natural_person
+      - company
+    Owner:
+      type: object
+      required:
+      - id
+      - ownerType
+      - preferredLanguage
+      - payoutIban
+      - payoutAccountName
+      properties:
+        id:
+          type: string
+        ownerType:
+          $ref: '#/components/schemas/OwnerType'
+        fullName:
+          type: string
+          nullable: true
+        companyName:
+          type: string
+          nullable: true
+        name:
+          type: string
+          description: 兼容字段：展示名（系统内部可与 fullName/companyName 合并）
+        idType:
+          type: string
+          enum:
+          - DNI
+          - NIE
+          - PASSPORT
+          - OTHER
+          nullable: true
+        idNumber:
+          type: string
+          nullable: true
+        taxResidencyType:
+          type: string
+          description: 税务身份（示例枚举，可按你现有 portal 继续扩展）
+          enum:
+          - ES_RESIDENT_IRPF
+          - EU_EEA_NON_RESIDENT_IRNR_19
+          - NON_EU_NON_RESIDENT_IRNR_24
+        taxResidencyCountry:
+          type: string
+          example: España
+        taxRateOverride:
+          type: number
+          format: float
+          minimum: 0
+          maximum: 1
+          nullable: true
+          description: 税率覆盖（0-1）。为空则用系统默认/参数表。
+        email:
+          type: string
+          format: email
+          nullable: true
+        phoneMobile:
+          type: string
+          nullable: true
+        phoneAlt:
+          type: string
+          nullable: true
+        phone:
+          type: string
+          description: 兼容字段
+          nullable: true
+        addressStreet:
+          type: string
+          nullable: true
+        addressCity:
+          type: string
+          nullable: true
+        addressPostcode:
+          type: string
+          nullable: true
+        addressCountry:
+          type: string
+          default: España
+        preferredContactChannel:
+          type: string
+          enum:
+          - email
+          - phone
+          - wechat
+          - whatsapp
+          default: email
+        preferredLanguage:
+          $ref: '#/components/schemas/LanguageCode'
+        payoutAccountName:
+          type: string
+        payoutIban:
+          type: string
+        payoutBankName:
+          type: string
+          nullable: true
+        payoutBicSwift:
+          type: string
+          nullable: true
+        defaultCollectMode:
+          type: string
+          enum:
+          - tenant_to_owner
+          - tenant_to_agency
+          - direct_debit
+          default: tenant_to_owner
+        defaultSettlementCycle:
+          type: string
+          enum:
+          - monthly
+          - quarterly
+          - yearly
+          default: yearly
+        defaultMgmtFeePerPeriod:
+          allOf:
+          - $ref: '#/components/schemas/MoneyString'
+          nullable: true
+          description: 每期固定管理费（€）（字符串金额）
+        createdAt:
+          type: string
+          format: date-time
+          readOnly: true
+        updatedAt:
+          type: string
+          format: date-time
+          readOnly: true
+    TenantType:
+      type: string
+      enum:
+      - natural_person
+      - company
+    Tenant:
+      type: object
+      required:
+      - id
+      - tenantType
+      - phoneMobile
+      properties:
+        id:
+          type: string
+        tenantType:
+          $ref: '#/components/schemas/TenantType'
+        fullName:
+          type: string
+          nullable: true
+        companyName:
+          type: string
+          nullable: true
+        name:
+          type: string
+          description: 兼容字段：展示名
+          nullable: true
+        idType:
+          type: string
+          enum:
+          - DNI
+          - NIE
+          - PASSPORT
+          - OTHER
+          nullable: true
+        idNumber:
+          type: string
+          nullable: true
+        email:
+          type: string
+          format: email
+          nullable: true
+        phoneMobile:
+          type: string
+        phoneAlt:
+          type: string
+          nullable: true
+        phone:
+          type: string
+          nullable: true
+          description: 兼容字段
+        addressStreet:
+          type: string
+          nullable: true
+        addressCity:
+          type: string
+          nullable: true
+        addressPostcode:
+          type: string
+          nullable: true
+        addressCountry:
+          type: string
+          default: España
+        preferredLanguage:
+          allOf:
+          - $ref: '#/components/schemas/LanguageCode'
+          nullable: true
+        notificationPrefs:
+          type: object
+          description: 通知偏好（可扩展）
+          properties:
+            channel:
+              type: string
+              enum:
+              - in_app
+              - email
+              - whatsapp
+              default: in_app
+          additionalProperties: false
+        createdAt:
+          type: string
+          format: date-time
+          readOnly: true
+        updatedAt:
+          type: string
+          format: date-time
+          readOnly: true
+    PropertyStatus:
+      type: string
+      enum:
+      - 空置
+      - 在租
+      - 已出租
+      - 维护中
+      - 下架
+    RentalMode:
+      type: string
+      enum:
+      - ENTIRE
+      - ROOM
+    PriceUnit:
+      type: string
+      enum:
+      - MONTH
+      - WEEK
+      - DAY
+      default: MONTH
+    Property:
+      type: object
+      required:
+      - id
+      - code
+      - title
+      - city
+      - status
+      - published
+      properties:
+        id:
+          type: string
+        code:
+          type: string
+        ownerId:
+          type: string
+          nullable: true
+        title:
+          type: string
+        headline:
+          type: string
+          nullable: true
+        address:
+          type: string
+          nullable: true
+        public_address:
+          type: string
+          nullable: true
+        city:
+          type: string
+        district:
+          type: string
+          nullable: true
+        subdistrict:
+          type: string
+          nullable: true
+        type:
+          type: string
+          enum:
+          - APARTMENT
+          - STUDIO
+          - HOUSE
+          - ROOM
+          - OTHER
+          nullable: true
+        size:
+          type: number
+          nullable: true
+          description: 面积（㎡）
+        bedrooms:
+          type: integer
+          nullable: true
+        bathrooms:
+          type: integer
+          nullable: true
+        floor:
+          type: string
+          nullable: true
+        furnished:
+          type: boolean
+          nullable: true
+        furnishing:
+          type: string
+          enum:
+          - FURNISHED
+          - SEMI_FURNISHED
+          - UNFURNISHED
+          nullable: true
+        rental_mode:
+          allOf:
+          - $ref: '#/components/schemas/RentalMode'
+          nullable: true
+        price:
+          allOf:
+          - $ref: '#/components/schemas/MoneyString'
+          nullable: true
+          description: 租金（€）（字符串金额）
+        price_unit:
+          allOf:
+          - $ref: '#/components/schemas/PriceUnit'
+          nullable: true
+        deposit_months:
+          type: integer
+          nullable: true
+        extra_deposit:
+          allOf:
+          - $ref: '#/components/schemas/MoneyString'
+          nullable: true
+        min_term_months:
+          type: integer
+          nullable: true
+        available_from:
+          type: string
+          format: date
+          nullable: true
+        status:
+          $ref: '#/components/schemas/PropertyStatus'
+        published:
+          type: boolean
+        auth_type:
+          type: string
+          nullable: true
+        auth_start:
+          type: string
+          format: date
+          nullable: true
+        auth_end:
+          type: string
+          format: date
+          nullable: true
+        contract_type:
+          type: string
+          nullable: true
+        has_lift:
+          type: boolean
+          nullable: true
+        empadronamiento:
+          type: boolean
+          nullable: true
+        util_water:
+          type: boolean
+          nullable: true
+        util_elec:
+          type: boolean
+          nullable: true
+        util_gas:
+          type: boolean
+          nullable: true
+        util_wifi:
+          type: boolean
+          nullable: true
+        util_community:
+          type: boolean
+          nullable: true
+        expenses_note:
+          type: string
+          nullable: true
+        description_zh:
+          type: string
+          nullable: true
+        description_es:
+          type: string
+          nullable: true
+        tags_public:
+          type: array
+          items:
+            type: string
+          nullable: true
+        suitable_for:
+          type: array
+          items:
+            type: string
+          nullable: true
+        features:
+          type: array
+          items:
+            type: string
+          nullable: true
+        transport:
+          type: string
+          nullable: true
+        highlights:
+          type: array
+          items:
+            type: string
+          nullable: true
+        schedule_url:
+          type: string
+          format: uri
+          nullable: true
+        images:
+          type: array
+          items:
+            type: string
+            format: uri
+          nullable: true
+        cover_image_url:
+          type: string
+          format: uri
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+          readOnly: true
+        updatedAt:
+          type: string
+          format: date-time
+          readOnly: true
+        rowVersion:
+          type: integer
+          format: int64
+          description: 用于乐观锁的行版本号（与 ETag/If-Match 对应）。
+    PropertyPublic:
+      type: object
+      description: 对外公开的房源字段（只包含营销站需要的字段）。
+      required:
+      - id
+      - code
+      - title
+      - city
+      - published
+      properties:
+        id:
+          type: string
+        code:
+          type: string
+        title:
+          type: string
+        city:
+          type: string
+        district:
+          type: string
+          nullable: true
+        subdistrict:
+          type: string
+          nullable: true
+        size:
+          type: number
+          nullable: true
+        bedrooms:
+          type: integer
+          nullable: true
+        bathrooms:
+          type: integer
+          nullable: true
+        floor:
+          type: string
+          nullable: true
+        furnished:
+          type: boolean
+          nullable: true
+        furnishing:
+          type: string
+          nullable: true
+        price:
+          allOf:
+          - $ref: '#/components/schemas/MoneyString'
+          nullable: true
+        price_unit:
+          allOf:
+          - $ref: '#/components/schemas/PriceUnit'
+          nullable: true
+        deposit_months:
+          type: integer
+          nullable: true
+        min_term_months:
+          type: integer
+          nullable: true
+        tags_public:
+          type: array
+          items:
+            type: string
+          nullable: true
+        suitable_for:
+          type: array
+          items:
+            type: string
+          nullable: true
+        features:
+          type: array
+          items:
+            type: string
+          nullable: true
+        transport:
+          type: string
+          nullable: true
+        description:
+          type: string
+          nullable: true
+        images:
+          type: array
+          items:
+            type: string
+            format: uri
+          nullable: true
+        cover_image_url:
+          type: string
+          format: uri
+          nullable: true
+        published:
+          type: boolean
+    LeaseStatus:
+      type: string
+      enum:
+      - 草稿
+      - 生效中
+      - 已结束
+      - 已作废
+    Lease:
+      type: object
+      required:
+      - id
+      - propertyId
+      - status
+      properties:
+        id:
+          type: string
+        code:
+          type: string
+          nullable: true
+        propertyId:
+          type: string
+        unitId:
+          type: string
+          nullable: true
+        tenantId:
+          type: string
+          nullable: true
+        start:
+          type: string
+          format: date
+          nullable: true
+        end:
+          type: string
+          format: date
+          nullable: true
+        monthlyRent:
+          allOf:
+          - $ref: '#/components/schemas/MoneyString'
+          nullable: true
+        currency:
+          type: string
+          enum:
+          - EUR
+          default: EUR
+        deposit:
+          allOf:
+          - $ref: '#/components/schemas/MoneyString'
+          nullable: true
+        collectMode:
+          type: string
+          enum:
+          - tenant_to_owner
+          - tenant_to_agency
+          - direct_debit
+          nullable: true
+        dueDay:
+          type: integer
+          minimum: 1
+          maximum: 28
+          nullable: true
+        paymentMethod:
+          type: string
+          enum:
+          - transfer
+          - direct_debit
+          - cash
+          default: transfer
+        depositHolder:
+          type: string
+          enum:
+          - owner
+          - agency
+          nullable: true
+        mgmtFeePerPeriod:
+          allOf:
+          - $ref: '#/components/schemas/MoneyString'
+          nullable: true
+        rentUseType:
+          type: string
+          enum:
+          - VIVIENDA
+          - TEMPORADA
+          - OTHER
+          nullable: true
+        isTenantHabitual:
+          type: boolean
+          nullable: true
+        terms:
+          type: object
+          nullable: true
+          description: 合同条款记录（仅记录，不自动生成法律结论）
+          additionalProperties: true
+        status:
+          $ref: '#/components/schemas/LeaseStatus'
+        createdAt:
+          type: string
+          format: date-time
+          readOnly: true
+        updatedAt:
+          type: string
+          format: date-time
+          readOnly: true
+        rowVersion:
+          type: integer
+          format: int64
+          description: 用于乐观锁的行版本号（与 ETag/If-Match 对应）。
+    InvoiceStatus:
+      type: string
+      enum:
+      - 未支付
+      - 待审核凭证
+      - 部分支付不足
+      - 已确认收款
+      - 已作废
+      - 已冲销
+    InvoiceType:
+      type: string
+      enum:
+      - normal
+      - credit
+    InvoiceBizType:
+      type: string
+      enum:
+      - RENT
+      - UTILITIES
+      - DEPOSIT
+      - MGMT_FEE
+      - OTHER
+      default: RENT
+    InvoiceItem:
+      type: object
+      required:
+      - type
+      - amount
+      properties:
+        type:
+          type: string
+          description: 例如：租金/水电网/管理费
+        amount:
+          allOf:
+          - $ref: '#/components/schemas/MoneyString'
+    InvoiceTax:
+      type: object
+      required:
+      - ivaRate
+      properties:
+        ivaRate:
+          type: number
+          format: float
+          minimum: 0
+          maximum: 1
+          description: IVA 税率（0-1）
+        baseAmount:
+          allOf:
+          - $ref: '#/components/schemas/MoneyString'
+          nullable: true
+        ivaAmount:
+          allOf:
+          - $ref: '#/components/schemas/MoneyString'
+          nullable: true
+    Invoice:
+      type: object
+      required:
+      - id
+      - leaseId
+      - period
+      - amount
+      - status
+      - type
+      properties:
+        id:
+          type: string
+        'no':
+          type: string
+          nullable: true
+          description: 发票号（可由服务端生成）
+        leaseId:
+          type: string
+        propertyId:
+          type: string
+          nullable: true
+        tenantId:
+          type: string
+          nullable: true
+          readOnly: true
+          description: 可由 lease 推导；为查询便利可冗余
+        period:
+          type: string
+          pattern: ^\d{4}-\d{2}$
+          example: 2025-03
+        issueDate:
+          type: string
+          format: date
+          nullable: true
+        due:
+          type: string
+          format: date
+          nullable: true
+          description: 到期日
+        currency:
+          type: string
+          enum:
+          - EUR
+          default: EUR
+        amount:
+          allOf:
+          - $ref: '#/components/schemas/MoneyString'
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/InvoiceItem'
+        status:
+          $ref: '#/components/schemas/InvoiceStatus'
+        type:
+          $ref: '#/components/schemas/InvoiceType'
+        parentId:
+          type: string
+          nullable: true
+        bizType:
+          $ref: '#/components/schemas/InvoiceBizType'
+        tax:
+          allOf:
+          - $ref: '#/components/schemas/InvoiceTax'
+          nullable: true
+        locked:
+          type: boolean
+          readOnly: true
+          default: false
+        lockedAt:
+          type: string
+          format: date-time
+          readOnly: true
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+          readOnly: true
+        updatedAt:
+          type: string
+          format: date-time
+          readOnly: true
+        rowVersion:
+          type: integer
+          format: int64
+          description: 用于乐观锁的行版本号（与 ETag/If-Match 对应）。
+    PaymentStatus:
+      type: string
+      enum:
+      - SUBMITTED
+      - VERIFIED
+      - REJECTED
+      - REVERSED
+    PaymentMethod:
+      type: string
+      enum:
+      - bank_transfer
+      - cash
+      - card
+      - direct_debit
+      - other
+    Payment:
+      type: object
+      required:
+      - id
+      - invoiceId
+      - amount
+      - paidAt
+      - method
+      - status
+      - createdAt
+      - createdBy
+      properties:
+        id:
+          type: string
+        invoiceId:
+          type: string
+        amount:
+          allOf:
+          - $ref: '#/components/schemas/MoneyString'
+        paidAt:
+          type: string
+          format: date
+        method:
+          $ref: '#/components/schemas/PaymentMethod'
+        status:
+          $ref: '#/components/schemas/PaymentStatus'
+        proofDocId:
+          type: string
+          nullable: true
+        note:
+          type: string
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+        createdBy:
+          type: string
+          description: 操作者（tenant/admin/system）或 userId
+        verifiedAt:
+          type: string
+          format: date-time
+          nullable: true
+        rejectedAt:
+          type: string
+          format: date-time
+          nullable: true
+        reversedAt:
+          type: string
+          format: date-time
+          nullable: true
+        reversedBy:
+          type: string
+          nullable: true
+        reversalReason:
+          type: string
+          nullable: true
+        rowVersion:
+          type: integer
+          format: int64
+          description: 用于乐观锁的行版本号（与 ETag/If-Match 对应）。
+    TicketStatus:
+      type: string
+      enum:
+      - PENDING_ADMIN
+      - REJECTED_ADMIN
+      - WAITING_LANDLORD
+      - IN_PROGRESS
+      - DONE
+      - CANCELLED
+      - NEW
+      description: NEW 为 admin 原型兼容值；服务端应标准化为 PENDING_ADMIN。
+    TicketPriority:
+      type: string
+      enum:
+      - LOW
+      - MEDIUM
+      - HIGH
+      - NORMAL
+    TicketApprovalStatus:
+      type: string
+      enum:
+      - PENDING
+      - APPROVED
+      - REJECTED
+    TicketVisibility:
+      type: string
+      enum:
+      - INTERNAL
+      - OWNER
+      - TENANT
+      - BOTH
+    TicketComment:
+      type: object
+      required:
+      - time
+      - by
+      - text
+      properties:
+        id:
+          type: string
+          nullable: true
+        time:
+          type: string
+          format: date-time
+        by:
+          type: string
+          description: userId / role / 名称
+        visibility:
+          allOf:
+          - $ref: '#/components/schemas/TicketVisibility'
+          nullable: true
+          default: BOTH
+        text:
+          type: string
+        text_i18n:
+          allOf:
+          - $ref: '#/components/schemas/I18nText'
+          nullable: true
+        text_display:
+          type: string
+          readOnly: true
+          nullable: true
+    TicketCostRange:
+      type: object
+      properties:
+        min:
+          allOf:
+          - $ref: '#/components/schemas/MoneyString'
+          nullable: true
+        max:
+          allOf:
+          - $ref: '#/components/schemas/MoneyString'
+          nullable: true
+        currency:
+          type: string
+          enum:
+          - EUR
+          default: EUR
+      additionalProperties: false
+    Ticket:
+      type: object
+      required:
+      - id
+      - code
+      - propertyId
+      - priority
+      - status
+      - createdAt
+      - updatedAt
+      properties:
+        id:
+          type: string
+        code:
+          type: string
+        ownerId:
+          type: string
+          nullable: true
+        tenantId:
+          type: string
+          nullable: true
+        propertyId:
+          type: string
+        leaseId:
+          type: string
+          nullable: true
+        title:
+          type: string
+        title_i18n:
+          allOf:
+          - $ref: '#/components/schemas/I18nText'
+          nullable: true
+        title_display:
+          type: string
+          readOnly: true
+          nullable: true
+        description:
+          type: string
+          nullable: true
+        description_i18n:
+          allOf:
+          - $ref: '#/components/schemas/I18nText'
+          nullable: true
+        description_display:
+          type: string
+          readOnly: true
+          nullable: true
+        category:
+          type: string
+          nullable: true
+          description: 可选枚举：plumbing/electrical/appliance/internet/other（保持开放以免阻塞）
+        priority:
+          $ref: '#/components/schemas/TicketPriority'
+        status:
+          $ref: '#/components/schemas/TicketStatus'
+        estCost:
+          allOf:
+          - $ref: '#/components/schemas/MoneyString'
+          nullable: true
+        estCostRange:
+          allOf:
+          - $ref: '#/components/schemas/TicketCostRange'
+          nullable: true
+        assignee:
+          type: string
+          nullable: true
+        vendor:
+          type: string
+          nullable: true
+        quoteAmount:
+          allOf:
+          - $ref: '#/components/schemas/MoneyString'
+          nullable: true
+        quoteAttachmentIds:
+          type: array
+          items:
+            type: string
+          nullable: true
+        approvalStatus:
+          allOf:
+          - $ref: '#/components/schemas/TicketApprovalStatus'
+          nullable: true
+        approvedAt:
+          type: string
+          format: date-time
+          nullable: true
+        actualCost:
+          allOf:
+          - $ref: '#/components/schemas/MoneyString'
+          nullable: true
+        linkedExpenseId:
+          type: string
+          nullable: true
+        resultNote:
+          type: string
+          nullable: true
+        resultNote_i18n:
+          allOf:
+          - $ref: '#/components/schemas/I18nText'
+          nullable: true
+        resultNote_display:
+          type: string
+          readOnly: true
+          nullable: true
+        attachmentIds:
+          type: array
+          items:
+            type: string
+          default: []
+        comments:
+          type: array
+          items:
+            $ref: '#/components/schemas/TicketComment'
+          default: []
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        rowVersion:
+          type: integer
+          format: int64
+          description: 用于乐观锁的行版本号（与 ETag/If-Match 对应）。
+    DocumentVisibility:
+      type: string
+      enum:
+      - INTERNAL
+      - OWNER
+      - TENANT
+      - BOTH
+    DocumentDocType:
+      type: string
+      description: 文件分类（可扩展）。
+      enum:
+      - Other
+      - TicketAttachment
+      - InvoiceProof
+      - LeaseContract
+      - LeaseContractSigned
+      - ExpenseReceipt
+      - DepositProof
+      - ApplicantDoc
+      - ID_DOC
+      - PAYSLIPS
+      - BANK_STATEMENTS
+      - WORK_CONTRACT
+      - PropertyImage
+    StorageProvider:
+      type: string
+      enum:
+      - GCS
+      - R2
+    Document:
+      type: object
+      required:
+      - id
+      - name
+      - docType
+      - visibility
+      - mime
+      - size
+      - createdAt
+      - scanStatus
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        docType:
+          $ref: '#/components/schemas/DocumentDocType'
+        expiresAt:
+          type: string
+          format: date
+          nullable: true
+        visibility:
+          $ref: '#/components/schemas/DocumentVisibility'
+        ownerId:
+          type: string
+          nullable: true
+        tenantId:
+          type: string
+          nullable: true
+        propertyId:
+          type: string
+          nullable: true
+        leaseId:
+          type: string
+          nullable: true
+        invoiceId:
+          type: string
+          nullable: true
+        ticketId:
+          type: string
+          nullable: true
+        entityType:
+          type: string
+          nullable: true
+          description: 例如 documentRequest / application / inventory ...
+        entityId:
+          type: string
+          nullable: true
+        mime:
+          type: string
+        size:
+          type: integer
+        sha256:
+          type: string
+          nullable: true
+        uploader:
+          type: string
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+        storageProvider:
+          allOf:
+          - $ref: '#/components/schemas/StorageProvider'
+          nullable: true
+          readOnly: true
+        bucket:
+          type: string
+          nullable: true
+          readOnly: true
+        objectKey:
+          type: string
+          nullable: true
+          readOnly: true
+        downloadUrl:
+          type: string
+          format: uri
+          nullable: true
+          readOnly: true
+          description: 签名下载链接（短期有效）（仅 scanStatus=READY 时返回/可用）
+        previewUrl:
+          type: string
+          format: uri
+          nullable: true
+          readOnly: true
+        dataUrl:
+          type: string
+          nullable: true
+          description: 仅 Demo/原型使用；生产禁止持久化此字段
+        rowVersion:
+          type: integer
+          format: int64
+          description: 用于乐观锁的行版本号（与 ETag/If-Match 对应）。
+        scanStatus:
+          $ref: '#/components/schemas/DocumentScanStatus'
+    NotificationType:
+      type: string
+      enum:
+      - welcome
+      - ticket_created
+      - ticket_status_changed
+      - invoice_proof_submitted
+      - invoice_payment_verified
+      - invoice_proof_rejected
+      - document_request_submitted
+      - document_request_approved
+      - document_request_rejected
+      - match_proposal_accepted
+      - match_proposal_declined
+      - generic
+    Notification:
+      type: object
+      required:
+      - id
+      - time
+      - type
+      - content
+      - read
+      properties:
+        id:
+          type: string
+        time:
+          type: string
+          format: date-time
+        type:
+          $ref: '#/components/schemas/NotificationType'
+        visibility:
+          allOf:
+          - $ref: '#/components/schemas/DocumentVisibility'
+          nullable: true
+          default: INTERNAL
+        actor:
+          type: string
+          nullable: true
+        ownerId:
+          type: string
+          nullable: true
+        tenantId:
+          type: string
+          nullable: true
+        propertyId:
+          type: string
+          nullable: true
+        leaseId:
+          type: string
+          nullable: true
+        invoiceId:
+          type: string
+          nullable: true
+        paymentId:
+          type: string
+          nullable: true
+        ticketId:
+          type: string
+          nullable: true
+        applicationId:
+          type: string
+          nullable: true
+        docRequestId:
+          type: string
+          nullable: true
+        content:
+          type: string
+        content_i18n:
+          allOf:
+          - $ref: '#/components/schemas/I18nText'
+          nullable: true
+        content_display:
+          type: string
+          readOnly: true
+          nullable: true
+        read:
+          type: boolean
+        rowVersion:
+          type: integer
+          format: int64
+          description: 用于乐观锁的行版本号（与 ETag/If-Match 对应）。
+    DocRequestScope:
+      type: string
+      enum:
+      - APPLICATION
+      - UNIT
+      - LEASE
+    DocRequestStatus:
+      type: string
+      enum:
+      - PENDING_UPLOAD
+      - SUBMITTED
+      - APPROVED
+      - REJECTED
+      - WAIVED
+    DocumentRequest:
+      type: object
+      required:
+      - id
+      - applicationId
+      - scope
+      - docKey
+      - docLabel
+      - required
+      - minFiles
+      - status
+      - createdBy
+      - createdAt
+      - updatedAt
+      properties:
+        id:
+          type: string
+        applicationId:
+          type: string
+        scope:
+          $ref: '#/components/schemas/DocRequestScope'
+        unitId:
+          type: string
+          nullable: true
+        leaseId:
+          type: string
+          nullable: true
+        docKey:
+          type: string
+          description: 大写 key，例如 ID_DOC / PAYSLIPS
+          pattern: ^[A-Z0-9_]{2,64}$
+        docLabel:
+          type: string
+        category:
+          type: string
+          nullable: true
+        instruction:
+          type: string
+          nullable: true
+        instruction_i18n:
+          allOf:
+          - $ref: '#/components/schemas/I18nText'
+          nullable: true
+        instruction_display:
+          type: string
+          readOnly: true
+          nullable: true
+        required:
+          type: boolean
+        minFiles:
+          type: integer
+          minimum: 0
+          maximum: 20
+        maxFiles:
+          type: integer
+          minimum: 1
+          maximum: 50
+          nullable: true
+        status:
+          $ref: '#/components/schemas/DocRequestStatus'
+        adminNote:
+          type: string
+          nullable: true
+        adminNote_i18n:
+          allOf:
+          - $ref: '#/components/schemas/I18nText'
+          nullable: true
+        adminNote_display:
+          type: string
+          readOnly: true
+          nullable: true
+        dueAt:
+          type: string
+          format: date
+          nullable: true
+        createdBy:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        documents:
+          type: array
+          items:
+            $ref: '#/components/schemas/Document'
+          readOnly: true
+          description: 服务端可按 entityType=documentRequest, entityId=req.id 聚合返回
+        rowVersion:
+          type: integer
+          format: int64
+          description: 用于乐观锁的行版本号（与 ETag/If-Match 对应）。
+    ApplicationStage:
+      type: string
+      enum:
+      - REGISTERED
+      - DOCS
+      - SEARCHING
+      - MATCHING
+      - SIGNING
+      - COMPLETED
+    Application:
+      type: object
+      required:
+      - id
+      - tenantId
+      - stage
+      - createdAt
+      - updatedAt
+      properties:
+        id:
+          type: string
+        tenantId:
+          type: string
+        stage:
+          $ref: '#/components/schemas/ApplicationStage'
+        assignedAgent:
+          type: string
+          nullable: true
+        targetRentType:
+          type: string
+          enum:
+          - ENTIRE
+          - ROOM
+          - EITHER
+          nullable: true
+        budgetMin:
+          allOf:
+          - $ref: '#/components/schemas/MoneyString'
+          nullable: true
+        budgetMax:
+          allOf:
+          - $ref: '#/components/schemas/MoneyString'
+          nullable: true
+        preferAreas:
+          type: array
+          items:
+            type: string
+          nullable: true
+        moveInDate:
+          type: string
+          format: date
+          nullable: true
+        intentUnitId:
+          type: string
+          nullable: true
+        createdFrom:
+          type: string
+          enum:
+          - TENANT
+          - ADMIN
+          - CRM
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        rowVersion:
+          type: integer
+          format: int64
+          description: 用于乐观锁的行版本号（与 ETag/If-Match 对应）。
+    MatchProposalStatus:
+      type: string
+      enum:
+      - PROPOSED
+      - ACCEPTED
+      - DECLINED
+    MatchProposal:
+      type: object
+      required:
+      - id
+      - applicationId
+      - unitId
+      - status
+      - createdBy
+      - createdAt
+      properties:
+        id:
+          type: string
+        applicationId:
+          type: string
+        unitId:
+          type: string
+        score:
+          type: number
+          nullable: true
+        message:
+          type: string
+          nullable: true
+        message_i18n:
+          allOf:
+          - $ref: '#/components/schemas/I18nText'
+          nullable: true
+        message_display:
+          type: string
+          readOnly: true
+          nullable: true
+        status:
+          $ref: '#/components/schemas/MatchProposalStatus'
+        createdBy:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        respondedAt:
+          type: string
+          format: date-time
+          nullable: true
+        rowVersion:
+          type: integer
+          format: int64
+          description: 用于乐观锁的行版本号（与 ETag/If-Match 对应）。
+    TenantLeadStatus:
+      type: string
+      enum:
+      - NEW
+      - CONTACTED
+      - QUALIFIED
+      - WON
+      - LOST
+      - ARCHIVED
+    LeadConsents:
+      type: object
+      required:
+      - privacyPolicyAccepted
+      properties:
+        privacyPolicyAccepted:
+          type: boolean
+          description: 必须为 true 才允许提交线索
+        marketingOptIn:
+          type: boolean
+          nullable: true
+        privacyPolicyVersion:
+          type: string
+          nullable: true
+      additionalProperties: false
+    TenantLead:
+      type: object
+      required:
+      - id
+      - name
+      - phone
+      - city
+      - status
+      - channel
+      - created_at
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        email:
+          type: string
+          format: email
+          nullable: true
+        phone:
+          type: string
+        wechat:
+          type: string
+          nullable: true
+        city:
+          type: string
+        budget:
+          allOf:
+          - $ref: '#/components/schemas/MoneyString'
+          nullable: true
+        move_in:
+          type: string
+          nullable: true
+        bedrooms:
+          type: integer
+          nullable: true
+        notes:
+          type: string
+          nullable: true
+        tenant_role:
+          type: string
+          nullable: true
+        tenant_household_type:
+          type: string
+          nullable: true
+        tenant_household_size:
+          type: integer
+          nullable: true
+        tenant_income_monthly:
+          type: string
+          nullable: true
+        tenant_rent_mode:
+          type: string
+          nullable: true
+        tenant_rent_type:
+          type: string
+          nullable: true
+        tenant_prefer_area_primary:
+          type: string
+          nullable: true
+        tenant_prefer_area_secondary:
+          type: string
+          nullable: true
+        tenant_budget_min:
+          allOf:
+          - $ref: '#/components/schemas/MoneyString'
+          nullable: true
+        tenant_budget_max:
+          allOf:
+          - $ref: '#/components/schemas/MoneyString'
+          nullable: true
+        tenant_move_in_date:
+          type: string
+          nullable: true
+        tenant_lease_term:
+          type: string
+          nullable: true
+        tenant_has_pets:
+          type: string
+          nullable: true
+        tenant_pets_detail:
+          type: string
+          nullable: true
+        tenant_bedrooms_min:
+          type: integer
+          nullable: true
+        tenant_bathrooms_min:
+          type: integer
+          nullable: true
+        tenant_doc_type:
+          type: string
+          nullable: true
+        tenant_contract_type:
+          type: string
+          nullable: true
+        tenant_is_becario:
+          type: string
+          nullable: true
+        tenant_has_local_irpf:
+          type: string
+          nullable: true
+        tenant_has_aval:
+          type: string
+          nullable: true
+        tenant_income_exact:
+          allOf:
+          - $ref: '#/components/schemas/MoneyString'
+          nullable: true
+        tenant_need_empadronamiento:
+          type: string
+          nullable: true
+        tenant_need_lift:
+          type: string
+          nullable: true
+        tenant_furnishing_pref:
+          type: string
+          nullable: true
+        tenant_notes:
+          type: string
+          nullable: true
+        source:
+          type: string
+          nullable: true
+        status:
+          $ref: '#/components/schemas/TenantLeadStatus'
+        channel:
+          type: string
+          enum:
+          - WEBSITE
+          - REFERRAL
+          - WHATSAPP
+          - OTHER
+          default: WEBSITE
+        created_at:
+          type: string
+          format: date-time
+        property_id:
+          type: string
+          nullable: true
+        consents:
+          allOf:
+          - $ref: '#/components/schemas/LeadConsents'
+          nullable: true
+        rowVersion:
+          type: integer
+          format: int64
+          description: 用于乐观锁的行版本号（与 ETag/If-Match 对应）。
+    LandlordLead:
+      type: object
+      required:
+      - id
+      - city
+      - source
+      - createdAt
+      properties:
+        id:
+          type: string
+        city:
+          type: string
+        district:
+          type: string
+          nullable: true
+        address:
+          type: string
+          nullable: true
+        unit_type:
+          type: string
+          nullable: true
+        property_status:
+          type: string
+          nullable: true
+        rent_mode:
+          type: string
+          nullable: true
+        concerns:
+          type: array
+          items:
+            type: string
+          nullable: true
+        contact_method:
+          type: string
+          nullable: true
+        contact_time:
+          type: string
+          nullable: true
+        contact_detail:
+          type: string
+          nullable: true
+        notes:
+          type: string
+          nullable: true
+        source:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        consents:
+          allOf:
+          - $ref: '#/components/schemas/LeadConsents'
+          nullable: true
+    PresignUploadRequest:
+      type: object
+      required:
+      - fileName
+      - mime
+      - size
+      - docType
+      - visibility
+      properties:
+        fileName:
+          type: string
+        mime:
+          type: string
+        size:
+          type: integer
+          minimum: 1
+        sha256:
+          type: string
+          nullable: true
+        docType:
+          $ref: '#/components/schemas/DocumentDocType'
+        expiresAt:
+          type: string
+          format: date
+          nullable: true
+        visibility:
+          $ref: '#/components/schemas/DocumentVisibility'
+        links:
+          type: object
+          description: 绑定关系（至少提供一个）
+          properties:
+            ownerId:
+              type: string
+              nullable: true
+            tenantId:
+              type: string
+              nullable: true
+            propertyId:
+              type: string
+              nullable: true
+            leaseId:
+              type: string
+              nullable: true
+            invoiceId:
+              type: string
+              nullable: true
+            ticketId:
+              type: string
+              nullable: true
+            entityType:
+              type: string
+              nullable: true
+            entityId:
+              type: string
+              nullable: true
+          additionalProperties: false
+    PresignUploadResponse:
+      type: object
+      required:
+      - uploadId
+      - docId
+      - uploadUrl
+      - method
+      - expiresAt
+      properties:
+        uploadId:
+          type: string
+        docId:
+          type: string
+        uploadUrl:
+          type: string
+          format: uri
+        method:
+          type: string
+          enum:
+          - PUT
+        headers:
+          type: object
+          additionalProperties:
+            type: string
+        expiresAt:
+          type: string
+          format: date-time
+    CompleteUploadRequest:
+      type: object
+      required:
+      - uploadId
+      - docId
+      properties:
+        uploadId:
+          type: string
+        docId:
+          type: string
+        size:
+          type: integer
+          nullable: true
+        sha256:
+          type: string
+          nullable: true
+    EnvelopeMeta:
+      type: object
+      required:
+      - requestId
+      - timestamp
+      properties:
+        requestId:
+          type: string
+          description: 请求追踪 ID（用于排障）
+        timestamp:
+          type: string
+          format: date-time
+          description: 服务端生成的响应时间戳
+    Envelope_UserMe:
+      allOf:
+      - $ref: '#/components/schemas/EnvelopeMeta'
+      - type: object
+        required:
+        - data
+        properties:
+          data:
+            $ref: '#/components/schemas/UserMe'
+    Envelope_TenantLead:
+      allOf:
+      - $ref: '#/components/schemas/EnvelopeMeta'
+      - type: object
+        required:
+        - data
+        properties:
+          data:
+            $ref: '#/components/schemas/TenantLead'
+    Inline_83d59a871e:
+      type: array
+      items:
+        $ref: '#/components/schemas/TenantLead'
+    Envelope_Inline_83d59a871e:
+      allOf:
+      - $ref: '#/components/schemas/EnvelopeMeta'
+      - type: object
+        required:
+        - data
+        properties:
+          data:
+            $ref: '#/components/schemas/Inline_83d59a871e'
+    Envelope_LandlordLead:
+      allOf:
+      - $ref: '#/components/schemas/EnvelopeMeta'
+      - type: object
+        required:
+        - data
+        properties:
+          data:
+            $ref: '#/components/schemas/LandlordLead'
+    Inline_44537f0d8b:
+      type: array
+      items:
+        $ref: '#/components/schemas/LandlordLead'
+    Envelope_Inline_44537f0d8b:
+      allOf:
+      - $ref: '#/components/schemas/EnvelopeMeta'
+      - type: object
+        required:
+        - data
+        properties:
+          data:
+            $ref: '#/components/schemas/Inline_44537f0d8b'
+    Inline_c12763a3f1:
+      type: array
+      items:
+        oneOf:
+        - $ref: '#/components/schemas/PropertyPublic'
+        - $ref: '#/components/schemas/Property'
+    Envelope_Inline_c12763a3f1:
+      allOf:
+      - $ref: '#/components/schemas/EnvelopeMeta'
+      - type: object
+        required:
+        - data
+        properties:
+          data:
+            $ref: '#/components/schemas/Inline_c12763a3f1'
+    Envelope_Property:
+      allOf:
+      - $ref: '#/components/schemas/EnvelopeMeta'
+      - type: object
+        required:
+        - data
+        properties:
+          data:
+            $ref: '#/components/schemas/Property'
+    Inline_4c4f3f668b:
+      type: array
+      items:
+        $ref: '#/components/schemas/Lease'
+    Envelope_Inline_4c4f3f668b:
+      allOf:
+      - $ref: '#/components/schemas/EnvelopeMeta'
+      - type: object
+        required:
+        - data
+        properties:
+          data:
+            $ref: '#/components/schemas/Inline_4c4f3f668b'
+    Envelope_Lease:
+      allOf:
+      - $ref: '#/components/schemas/EnvelopeMeta'
+      - type: object
+        required:
+        - data
+        properties:
+          data:
+            $ref: '#/components/schemas/Lease'
+    Inline_7eb7f2677d:
+      type: array
+      items:
+        $ref: '#/components/schemas/Ticket'
+    Envelope_Inline_7eb7f2677d:
+      allOf:
+      - $ref: '#/components/schemas/EnvelopeMeta'
+      - type: object
+        required:
+        - data
+        properties:
+          data:
+            $ref: '#/components/schemas/Inline_7eb7f2677d'
+    Envelope_Ticket:
+      allOf:
+      - $ref: '#/components/schemas/EnvelopeMeta'
+      - type: object
+        required:
+        - data
+        properties:
+          data:
+            $ref: '#/components/schemas/Ticket'
+    Inline_4b512fd314:
+      type: array
+      items:
+        $ref: '#/components/schemas/Invoice'
+    Envelope_Inline_4b512fd314:
+      allOf:
+      - $ref: '#/components/schemas/EnvelopeMeta'
+      - type: object
+        required:
+        - data
+        properties:
+          data:
+            $ref: '#/components/schemas/Inline_4b512fd314'
+    Envelope_Invoice:
+      allOf:
+      - $ref: '#/components/schemas/EnvelopeMeta'
+      - type: object
+        required:
+        - data
+        properties:
+          data:
+            $ref: '#/components/schemas/Invoice'
+    Inline_b533d3aceb:
+      type: array
+      items:
+        $ref: '#/components/schemas/Payment'
+    Envelope_Inline_b533d3aceb:
+      allOf:
+      - $ref: '#/components/schemas/EnvelopeMeta'
+      - type: object
+        required:
+        - data
+        properties:
+          data:
+            $ref: '#/components/schemas/Inline_b533d3aceb'
+    Envelope_Payment:
+      allOf:
+      - $ref: '#/components/schemas/EnvelopeMeta'
+      - type: object
+        required:
+        - data
+        properties:
+          data:
+            $ref: '#/components/schemas/Payment'
+    Envelope_PresignUploadResponse:
+      allOf:
+      - $ref: '#/components/schemas/EnvelopeMeta'
+      - type: object
+        required:
+        - data
+        properties:
+          data:
+            $ref: '#/components/schemas/PresignUploadResponse'
+    Envelope_Document:
+      allOf:
+      - $ref: '#/components/schemas/EnvelopeMeta'
+      - type: object
+        required:
+        - data
+        properties:
+          data:
+            $ref: '#/components/schemas/Document'
+    Inline_d5ddc47f0f:
+      type: array
+      items:
+        $ref: '#/components/schemas/Document'
+    Envelope_Inline_d5ddc47f0f:
+      allOf:
+      - $ref: '#/components/schemas/EnvelopeMeta'
+      - type: object
+        required:
+        - data
+        properties:
+          data:
+            $ref: '#/components/schemas/Inline_d5ddc47f0f'
+    Inline_8caf88b7df:
+      type: array
+      items:
+        $ref: '#/components/schemas/Notification'
+    Envelope_Inline_8caf88b7df:
+      allOf:
+      - $ref: '#/components/schemas/EnvelopeMeta'
+      - type: object
+        required:
+        - data
+        properties:
+          data:
+            $ref: '#/components/schemas/Inline_8caf88b7df'
+    Envelope_Notification:
+      allOf:
+      - $ref: '#/components/schemas/EnvelopeMeta'
+      - type: object
+        required:
+        - data
+        properties:
+          data:
+            $ref: '#/components/schemas/Notification'
+    Inline_3620a3557f:
+      type: array
+      items:
+        $ref: '#/components/schemas/DocumentRequest'
+    Envelope_Inline_3620a3557f:
+      allOf:
+      - $ref: '#/components/schemas/EnvelopeMeta'
+      - type: object
+        required:
+        - data
+        properties:
+          data:
+            $ref: '#/components/schemas/Inline_3620a3557f'
+    Envelope_DocumentRequest:
+      allOf:
+      - $ref: '#/components/schemas/EnvelopeMeta'
+      - type: object
+        required:
+        - data
+        properties:
+          data:
+            $ref: '#/components/schemas/DocumentRequest'
+    Inline_47c78ed493:
+      type: array
+      items:
+        $ref: '#/components/schemas/Application'
+    Envelope_Inline_47c78ed493:
+      allOf:
+      - $ref: '#/components/schemas/EnvelopeMeta'
+      - type: object
+        required:
+        - data
+        properties:
+          data:
+            $ref: '#/components/schemas/Inline_47c78ed493'
+    Envelope_Application:
+      allOf:
+      - $ref: '#/components/schemas/EnvelopeMeta'
+      - type: object
+        required:
+        - data
+        properties:
+          data:
+            $ref: '#/components/schemas/Application'
+    Inline_58b21c26ef:
+      type: array
+      items:
+        $ref: '#/components/schemas/MatchProposal'
+    Envelope_Inline_58b21c26ef:
+      allOf:
+      - $ref: '#/components/schemas/EnvelopeMeta'
+      - type: object
+        required:
+        - data
+        properties:
+          data:
+            $ref: '#/components/schemas/Inline_58b21c26ef'
+    Envelope_MatchProposal:
+      allOf:
+      - $ref: '#/components/schemas/EnvelopeMeta'
+      - type: object
+        required:
+        - data
+        properties:
+          data:
+            $ref: '#/components/schemas/MatchProposal'
+    HealthResponse:
+      type: object
+      required:
+      - status
+      - version
+      - env
+      - region
+      properties:
+        status:
+          type: string
+          example: ok
+        version:
+          type: string
+          description: API 版本（与 OpenAPI info.version 对齐）
+        env:
+          type: string
+          description: 运行环境（dev/staging/prod）
+        region:
+          type: string
+          description: 部署区域/集群标识
+        uptimeSec:
+          type: integer
+          minimum: 0
+          nullable: true
+    Envelope_HealthResponse:
+      allOf:
+      - $ref: '#/components/schemas/EnvelopeMeta'
+      - type: object
+        required:
+        - data
+        properties:
+          data:
+            $ref: '#/components/schemas/HealthResponse'
+    InvitationCreateRequest:
+      type: object
+      required:
+      - email
+      - leaseId
+      properties:
+        email:
+          type: string
+          format: email
+        leaseId:
+          type: string
+          description: 绑定租约（Tenant 邀请必须绑定 lease）
+        inviteeRole:
+          $ref: '#/components/schemas/UserRole'
+        expiresAt:
+          type: string
+          format: date-time
+          nullable: true
+        sendEmail:
+          type: boolean
+          default: true
+          description: 是否发送邀请邮件/通知
+        note:
+          type: string
+          nullable: true
+          description: 备注（不应包含敏感信息）
+    Invitation:
+      type: object
+      required:
+      - id
+      - email
+      - leaseId
+      - expiresAt
+      - createdAt
+      properties:
+        id:
+          type: string
+        email:
+          type: string
+          format: email
+        leaseId:
+          type: string
+        inviteeRole:
+          $ref: '#/components/schemas/UserRole'
+        expiresAt:
+          type: string
+          format: date-time
+        status:
+          type: string
+          enum:
+          - PENDING
+          - ACCEPTED
+          - EXPIRED
+          - REVOKED
+          default: PENDING
+        createdAt:
+          type: string
+          format: date-time
+    Envelope_Invitation:
+      allOf:
+      - $ref: '#/components/schemas/EnvelopeMeta'
+      - type: object
+        required:
+        - data
+        properties:
+          data:
+            $ref: '#/components/schemas/Invitation'
+    GDPRJobStatus:
+      type: string
+      enum:
+      - PENDING
+      - RUNNING
+      - DONE
+      - FAILED
+    GDPRJobType:
+      type: string
+      enum:
+      - EXPORT
+      - ERASE
+    GDPRExportRequest:
+      type: object
+      required:
+      - targetType
+      - targetId
+      properties:
+        targetType:
+          type: string
+          enum:
+          - USER
+          - TENANT
+          - OWNER
+          - ORG
+        targetId:
+          type: string
+        format:
+          type: string
+          enum:
+          - ZIP
+          - JSON
+          - CSV
+          default: ZIP
+        notifyEmail:
+          type: string
+          format: email
+          nullable: true
+        reason:
+          type: string
+          nullable: true
+    GDPREraseRequest:
+      type: object
+      required:
+      - targetType
+      - targetId
+      - mode
+      properties:
+        targetType:
+          type: string
+          enum:
+          - USER
+          - TENANT
+          - OWNER
+          - ORG
+        targetId:
+          type: string
+        mode:
+          type: string
+          enum:
+          - ANONYMIZE
+          - ERASE
+        reason:
+          type: string
+          nullable: true
+        confirm:
+          type: boolean
+          default: false
+          description: 二次确认（可选门禁）
+    GDPRJob:
+      type: object
+      required:
+      - jobId
+      - type
+      - status
+      - createdAt
+      properties:
+        jobId:
+          type: string
+        type:
+          $ref: '#/components/schemas/GDPRJobType'
+        status:
+          $ref: '#/components/schemas/GDPRJobStatus'
+        createdAt:
+          type: string
+          format: date-time
+        downloadUrl:
+          type: string
+          format: uri
+          nullable: true
+          description: 导出下载链接（短期有效，可能为空，后续通过通知提供）
+        message:
+          type: string
+          nullable: true
+        targetType:
+          type: string
+          enum:
+          - USER
+          - TENANT
+          - OWNER
+          - ORG
+          nullable: true
+        targetId:
+          type: string
+          nullable: true
+        requestedByUserId:
+          type: string
+          nullable: true
+          description: 发起该 GDPR 任务的操作人 userId（如有）。
+        finishedAt:
+          type: string
+          format: date-time
+          nullable: true
+        errorCode:
+          type: string
+          nullable: true
+    Envelope_GDPRJob:
+      allOf:
+      - $ref: '#/components/schemas/EnvelopeMeta'
+      - type: object
+        required:
+        - data
+        properties:
+          data:
+            $ref: '#/components/schemas/GDPRJob'
+    OkResult:
+      type: object
+      required:
+      - ok
+      properties:
+        ok:
+          type: boolean
+          example: true
+        message:
+          type: string
+          nullable: true
+      additionalProperties: false
+    Envelope_OkResult:
+      allOf:
+      - $ref: '#/components/schemas/EnvelopeMeta'
+      - type: object
+        required:
+        - data
+        properties:
+          data:
+            $ref: '#/components/schemas/OkResult'
+    EnvelopeMetaPaged:
+      allOf:
+      - $ref: '#/components/schemas/EnvelopeMeta'
+      - type: object
+        properties:
+          nextCursor:
+            type: string
+            nullable: true
+            description: 下一页游标（不透明字符串）。为空表示无更多。
+    GDPRJobList:
+      type: array
+      items:
+        $ref: '#/components/schemas/GDPRJob'
+    Envelope_GDPRJobList:
+      allOf:
+      - $ref: '#/components/schemas/EnvelopeMetaPaged'
+      - type: object
+        required:
+        - data
+        properties:
+          data:
+            $ref: '#/components/schemas/GDPRJobList'
+    MoneyString:
+      type: string
+      description: 金额（EUR）。为避免浮点精度问题，API 层禁止使用 JSON number；统一用字符串表达（可为整数或两位小数）。服务端输出建议规范化为两位小数。
+      example: '1234.56'
+      pattern: ^-?\d+(\.\d{2})?$
+    DocumentScanStatus:
+      type: string
+      description: 文件扫描状态机：UPLOADED → SCANNING → READY / BLOCKED；扫描失败为 FAILED。仅 READY
+        可生成 downloadUrl/previewUrl。
+      enum:
+      - UPLOADED
+      - SCANNING
+      - READY
+      - BLOCKED
+      - FAILED
+    TurnstileToken:
+      type: string
+      description: Cloudflare Turnstile token（前端获取）。PUBLIC 高风险接口必须携带；服务端使用 TURNSTILE_SECRET
+        校验。
+      minLength: 1
+      example: 0x4AAAAAA...
+    TenantLeadCreateRequest:
+      type: object
+      required:
+      - name
+      - phone
+      - city
+      - consents
+      - turnstileToken
+      properties:
+        name:
+          type: string
+        email:
+          type: string
+          format: email
+          nullable: true
+        phone:
+          type: string
+        wechat:
+          type: string
+          nullable: true
+        city:
+          type: string
+        budget:
+          allOf:
+          - $ref: '#/components/schemas/MoneyString'
+          nullable: true
+        move_in:
+          type: string
+          nullable: true
+        bedrooms:
+          type: integer
+          nullable: true
+        notes:
+          type: string
+          nullable: true
+        tenant_role:
+          type: string
+          nullable: true
+        tenant_household_type:
+          type: string
+          nullable: true
+        tenant_household_size:
+          type: integer
+          nullable: true
+        tenant_income_monthly:
+          type: string
+          nullable: true
+        tenant_rent_mode:
+          type: string
+          nullable: true
+        tenant_rent_type:
+          type: string
+          nullable: true
+        tenant_prefer_area_primary:
+          type: string
+          nullable: true
+        tenant_prefer_area_secondary:
+          type: string
+          nullable: true
+        tenant_budget_min:
+          allOf:
+          - $ref: '#/components/schemas/MoneyString'
+          nullable: true
+        tenant_budget_max:
+          allOf:
+          - $ref: '#/components/schemas/MoneyString'
+          nullable: true
+        tenant_move_in_date:
+          type: string
+          nullable: true
+        tenant_lease_term:
+          type: string
+          nullable: true
+        tenant_has_pets:
+          type: string
+          nullable: true
+        tenant_pets_detail:
+          type: string
+          nullable: true
+        tenant_bedrooms_min:
+          type: integer
+          nullable: true
+        tenant_bathrooms_min:
+          type: integer
+          nullable: true
+        tenant_doc_type:
+          type: string
+          nullable: true
+        tenant_contract_type:
+          type: string
+          nullable: true
+        tenant_is_becario:
+          type: string
+          nullable: true
+        tenant_has_local_irpf:
+          type: string
+          nullable: true
+        tenant_has_aval:
+          type: string
+          nullable: true
+        tenant_income_exact:
+          allOf:
+          - $ref: '#/components/schemas/MoneyString'
+          nullable: true
+        tenant_need_empadronamiento:
+          type: string
+          nullable: true
+        tenant_need_lift:
+          type: string
+          nullable: true
+        tenant_furnishing_pref:
+          type: string
+          nullable: true
+        tenant_notes:
+          type: string
+          nullable: true
+        source:
+          type: string
+          nullable: true
+        property_id:
+          type: string
+          nullable: true
+        consents:
+          allOf:
+          - $ref: '#/components/schemas/LeadConsents'
+        turnstileToken:
+          $ref: '#/components/schemas/TurnstileToken'
+    LandlordLeadCreateRequest:
+      type: object
+      required:
+      - city
+      - consents
+      - turnstileToken
+      properties:
+        city:
+          type: string
+        district:
+          type: string
+          nullable: true
+        address:
+          type: string
+          nullable: true
+        unit_type:
+          type: string
+          nullable: true
+        property_status:
+          type: string
+          nullable: true
+        rent_mode:
+          type: string
+          nullable: true
+        concerns:
+          type: array
+          items:
+            type: string
+          nullable: true
+        contact_method:
+          type: string
+          nullable: true
+        contact_time:
+          type: string
+          nullable: true
+        contact_detail:
+          type: string
+          nullable: true
+        notes:
+          type: string
+          nullable: true
+        consents:
+          allOf:
+          - $ref: '#/components/schemas/LeadConsents'
+        turnstileToken:
+          $ref: '#/components/schemas/TurnstileToken'
+  responses:
+    BadRequest400:
+      description: 请求参数错误 / 校验失败
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    Unauthorized401:
+      description: 未登录或会话失效
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    Forbidden403:
+      description: 无权限（或策略要求返回 404 以防止资源枚举）
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    NotFound404:
+      description: 资源不存在（或越权时按 404 处理）
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    Conflict409:
+      description: 并发冲突 / 乐观锁失败（expected_row_version/If-Match）
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    TooManyRequests429:
+      description: 请求过于频繁（限流触发）
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    InternalError500:
+      description: 服务端异常
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    PreconditionFailed412:
+      description: Precondition Failed（ETag/If-Match 不匹配，资源已被他人修改）
+      content:
+        application/json:
+          schema: &id001
+            $ref: '#/components/schemas/ErrorResponse'
+    PreconditionRequired428:
+      description: Precondition Required（缺少 If-Match；该接口启用强制乐观锁门禁）
+      content:
+        application/json:
+          schema: *id001
+  headers:
+    ETag:
+      description: 资源版本 ETag（由 rowVersion 派生）。用于 If-Match 乐观锁。
+      schema:
+        type: string
+paths:
+  /me:
+    get:
+      tags:
+      - Auth & Profile
+      summary: 获取当前登录用户信息（角色/绑定的 ownerId/tenantId/语言偏好）
+      security:
+      - sessionCookie: []
+      parameters:
+      - $ref: '#/components/parameters/AcceptLanguage'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Envelope_UserMe'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest400'
+        '403':
+          $ref: '#/components/responses/Forbidden403'
+        '500':
+          $ref: '#/components/responses/InternalError500'
+      x-rate-limit-tier: NONE
+      x-error-strategy: '403'
+  /me/preferences:
+    patch:
+      tags:
+      - Auth & Profile
+      summary: 更新当前用户偏好（语言/通知）
+      security:
+      - sessionCookie: []
+        csrfToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                preferredLanguage:
+                  $ref: '#/components/schemas/LanguageCode'
+                notificationPrefs:
+                  type: object
+                  additionalProperties: true
+              additionalProperties: false
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Envelope_UserMe'
+        '400':
+          description: Bad Request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          $ref: '#/components/responses/Forbidden403'
+        '409':
+          $ref: '#/components/responses/Conflict409'
+        '429':
+          $ref: '#/components/responses/TooManyRequests429'
+        '500':
+          $ref: '#/components/responses/InternalError500'
+      x-rate-limit-tier: STANDARD
+      x-audit: true
+      x-audit-action: ME_UPDATE
+      x-error-strategy: '403'
+  /tenant-leads:
+    post:
+      tags:
+      - Public
+      summary: 提交租客线索（Homepage 表单）
+      description: 公开接口：**必须**接入 Turnstile + 限流/风控；必须携带隐私政策同意（consents）。
+      parameters:
+      - $ref: '#/components/parameters/AcceptLanguage'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TenantLeadCreateRequest'
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Envelope_TenantLead'
+          headers:
+            ETag:
+              $ref: '#/components/headers/ETag'
+        '400':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '429':
+          $ref: '#/components/responses/TooManyRequests429'
+        '500':
+          $ref: '#/components/responses/InternalError500'
+      x-rate-limit-tier: HIGH_RISK
+      x-audit: true
+      x-audit-action: LEAD_SUBMIT
+      x-error-strategy: '400'
+    get:
+      tags:
+      - Core
+      summary: 查询租客线索（CRM/Admin）
+      security:
+      - sessionCookie: []
+      parameters:
+      - $ref: '#/components/parameters/AcceptLanguage'
+      - name: status
+        in: query
+        required: false
+        schema:
+          $ref: '#/components/schemas/TenantLeadStatus'
+      - $ref: '#/components/parameters/Limit'
+      - $ref: '#/components/parameters/Cursor'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Envelope_Inline_83d59a871e'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest400'
+        '403':
+          $ref: '#/components/responses/Forbidden403'
+        '404':
+          $ref: '#/components/responses/NotFound404'
+        '429':
+          $ref: '#/components/responses/TooManyRequests429'
+        '500':
+          $ref: '#/components/responses/InternalError500'
+      x-rate-limit-tier: STANDARD
+      x-error-strategy: 403/404
+  /tenant-leads/{leadId}:
+    get:
+      tags:
+      - Core
+      summary: 获取单条租客线索
+      security:
+      - sessionCookie: []
+      parameters:
+      - $ref: '#/components/parameters/AcceptLanguage'
+      - name: leadId
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Envelope_TenantLead'
+          headers:
+            ETag:
+              $ref: '#/components/headers/ETag'
+        '404':
+          description: Not Found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest400'
+        '401':
+          $ref: '#/components/responses/Unauthorized401'
+        '403':
+          $ref: '#/components/responses/Forbidden403'
+        '429':
+          $ref: '#/components/responses/TooManyRequests429'
+        '500':
+          $ref: '#/components/responses/InternalError500'
+      x-rate-limit-tier: STANDARD
+      x-error-strategy: 403/404
+    patch:
+      tags:
+      - Core
+      summary: 更新租客线索状态/备注（CRM/Admin）
+      security:
+      - sessionCookie: []
+        csrfToken: []
+      parameters:
+      - $ref: '#/components/parameters/AcceptLanguage'
+      - name: leadId
+        in: path
+        required: true
+        schema:
+          type: string
+      - $ref: '#/components/parameters/IfMatch'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                status:
+                  $ref: '#/components/schemas/TenantLeadStatus'
+                notes:
+                  type: string
+                  nullable: true
+                tenant_notes:
+                  type: string
+                  nullable: true
+              additionalProperties: false
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Envelope_TenantLead'
+          headers:
+            ETag:
+              $ref: '#/components/headers/ETag'
+        '400':
+          description: Bad Request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized401'
+        '403':
+          $ref: '#/components/responses/Forbidden403'
+        '404':
+          $ref: '#/components/responses/NotFound404'
+        '409':
+          $ref: '#/components/responses/Conflict409'
+        '429':
+          $ref: '#/components/responses/TooManyRequests429'
+        '500':
+          $ref: '#/components/responses/InternalError500'
+        '412':
+          $ref: '#/components/responses/PreconditionFailed412'
+        '428':
+          $ref: '#/components/responses/PreconditionRequired428'
+      x-rate-limit-tier: STANDARD
+      x-error-strategy: 403/404
+      description: 并发控制：该接口启用 If-Match 乐观锁（基于 rowVersion/ETag）。
+  /landlord-leads:
+    post:
+      tags:
+      - Public
+      summary: 提交房东线索（Homepage 表单）
+      description: 公开接口：**必须** Turnstile + 限流；必须携带隐私政策同意（consents）。
+      parameters:
+      - $ref: '#/components/parameters/AcceptLanguage'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LandlordLeadCreateRequest'
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Envelope_LandlordLead'
+        '400':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '429':
+          $ref: '#/components/responses/TooManyRequests429'
+        '500':
+          $ref: '#/components/responses/InternalError500'
+      x-rate-limit-tier: HIGH_RISK
+      x-audit: true
+      x-audit-action: LEAD_SUBMIT
+      x-error-strategy: '400'
+    get:
+      tags:
+      - Core
+      summary: 查询房东线索（Admin/CRM）
+      security:
+      - sessionCookie: []
+      parameters:
+      - $ref: '#/components/parameters/Limit'
+      - $ref: '#/components/parameters/Cursor'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Envelope_Inline_44537f0d8b'
+        '400':
+          $ref: '#/components/responses/BadRequest400'
+        '401':
+          $ref: '#/components/responses/Unauthorized401'
+        '403':
+          $ref: '#/components/responses/Forbidden403'
+        '404':
+          $ref: '#/components/responses/NotFound404'
+        '429':
+          $ref: '#/components/responses/TooManyRequests429'
+        '500':
+          $ref: '#/components/responses/InternalError500'
+      x-rate-limit-tier: STANDARD
+      x-error-strategy: 403/404
+  /properties:
+    get:
+      tags:
+      - Core
+      - Public
+      summary: 查询房源列表（公开 published=true / 内部全量）
+      description: '兼容原型：Homepage 使用 published=true 拉取公开房源。
+
+        建议：
+
+        - 未登录时仅允许 published=true，并只返回 PropertyPublic 字段。
+
+        - 登录且具备权限时返回完整 Property 字段。'
+      parameters:
+      - $ref: '#/components/parameters/AcceptLanguage'
+      - name: published
+        in: query
+        required: false
+        schema:
+          type: boolean
+      - name: city
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: district
+        in: query
+        required: false
+        schema:
+          type: string
+      - $ref: '#/components/parameters/Limit'
+      - $ref: '#/components/parameters/Cursor'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Envelope_Inline_c12763a3f1'
+        '400':
+          $ref: '#/components/responses/BadRequest400'
+        '429':
+          $ref: '#/components/responses/TooManyRequests429'
+        '500':
+          $ref: '#/components/responses/InternalError500'
+      x-rate-limit-tier: STANDARD
+      x-error-strategy: '400'
+    post:
+      tags:
+      - Core
+      summary: 创建房源（Admin/CRM）
+      security:
+      - sessionCookie: []
+        csrfToken: []
+      parameters:
+      - $ref: '#/components/parameters/AcceptLanguage'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Property'
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Envelope_Property'
+          headers:
+            ETag:
+              $ref: '#/components/headers/ETag'
+        '400':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized401'
+        '403':
+          $ref: '#/components/responses/Forbidden403'
+        '404':
+          $ref: '#/components/responses/NotFound404'
+        '429':
+          $ref: '#/components/responses/TooManyRequests429'
+        '500':
+          $ref: '#/components/responses/InternalError500'
+      x-rate-limit-tier: STANDARD
+      x-audit: true
+      x-audit-action: PROPERTY_CREATE
+      x-error-strategy: 403/404
+  /properties/{propertyId}:
+    get:
+      tags:
+      - Core
+      summary: 获取房源详情
+      security:
+      - sessionCookie: []
+      parameters:
+      - $ref: '#/components/parameters/AcceptLanguage'
+      - name: propertyId
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Envelope_Property'
+          headers:
+            ETag:
+              $ref: '#/components/headers/ETag'
+        '404':
+          description: Not Found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest400'
+        '401':
+          $ref: '#/components/responses/Unauthorized401'
+        '403':
+          $ref: '#/components/responses/Forbidden403'
+        '429':
+          $ref: '#/components/responses/TooManyRequests429'
+        '500':
+          $ref: '#/components/responses/InternalError500'
+      x-rate-limit-tier: STANDARD
+      x-error-strategy: 403/404
+    patch:
+      tags:
+      - Core
+      summary: 更新房源（Admin/CRM）
+      security:
+      - sessionCookie: []
+        csrfToken: []
+      parameters:
+      - $ref: '#/components/parameters/AcceptLanguage'
+      - name: propertyId
+        in: path
+        required: true
+        schema:
+          type: string
+      - $ref: '#/components/parameters/IfMatch'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Property'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Envelope_Property'
+          headers:
+            ETag:
+              $ref: '#/components/headers/ETag'
+        '400':
+          $ref: '#/components/responses/BadRequest400'
+        '401':
+          $ref: '#/components/responses/Unauthorized401'
+        '403':
+          $ref: '#/components/responses/Forbidden403'
+        '404':
+          $ref: '#/components/responses/NotFound404'
+        '409':
+          $ref: '#/components/responses/Conflict409'
+        '429':
+          $ref: '#/components/responses/TooManyRequests429'
+        '500':
+          $ref: '#/components/responses/InternalError500'
+        '412':
+          $ref: '#/components/responses/PreconditionFailed412'
+        '428':
+          $ref: '#/components/responses/PreconditionRequired428'
+      x-rate-limit-tier: STANDARD
+      x-audit: true
+      x-audit-action: PROPERTY_UPDATE
+      x-error-strategy: 403/404
+      description: 并发控制：该接口启用 If-Match 乐观锁（基于 rowVersion/ETag）。
+    delete:
+      tags:
+      - Core
+      summary: 删除房源（Admin）
+      security:
+      - sessionCookie: []
+        csrfToken: []
+      parameters:
+      - name: propertyId
+        in: path
+        required: true
+        schema:
+          type: string
+      - $ref: '#/components/parameters/IfMatch'
+      responses:
+        '204':
+          description: Deleted
+        '404':
+          description: Not Found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest400'
+        '401':
+          $ref: '#/components/responses/Unauthorized401'
+        '403':
+          $ref: '#/components/responses/Forbidden403'
+        '429':
+          $ref: '#/components/responses/TooManyRequests429'
+        '500':
+          $ref: '#/components/responses/InternalError500'
+        '412':
+          $ref: '#/components/responses/PreconditionFailed412'
+        '428':
+          $ref: '#/components/responses/PreconditionRequired428'
+      x-rate-limit-tier: HIGH_RISK
+      x-audit: true
+      x-audit-action: PROPERTY_DELETE
+      x-error-strategy: 403/404
+      description: 并发控制：该接口启用 If-Match 乐观锁（基于 rowVersion/ETag）。
+  /leases:
+    get:
+      tags:
+      - Core
+      summary: 查询租约（Owner/Tenant/Admin 按权限过滤）
+      security:
+      - sessionCookie: []
+      parameters:
+      - $ref: '#/components/parameters/AcceptLanguage'
+      - name: ownerId
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: tenantId
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: propertyId
+        in: query
+        required: false
+        schema:
+          type: string
+      - $ref: '#/components/parameters/Limit'
+      - $ref: '#/components/parameters/Cursor'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Envelope_Inline_4c4f3f668b'
+        '400':
+          $ref: '#/components/responses/BadRequest400'
+        '401':
+          $ref: '#/components/responses/Unauthorized401'
+        '403':
+          $ref: '#/components/responses/Forbidden403'
+        '404':
+          $ref: '#/components/responses/NotFound404'
+        '429':
+          $ref: '#/components/responses/TooManyRequests429'
+        '500':
+          $ref: '#/components/responses/InternalError500'
+      x-rate-limit-tier: STANDARD
+      x-error-strategy: 403/404
+    post:
+      tags:
+      - Core
+      summary: 创建租约（Admin）
+      security:
+      - sessionCookie: []
+        csrfToken: []
+      parameters:
+      - $ref: '#/components/parameters/AcceptLanguage'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Lease'
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Envelope_Lease'
+          headers:
+            ETag:
+              $ref: '#/components/headers/ETag'
+        '400':
+          $ref: '#/components/responses/BadRequest400'
+        '401':
+          $ref: '#/components/responses/Unauthorized401'
+        '403':
+          $ref: '#/components/responses/Forbidden403'
+        '404':
+          $ref: '#/components/responses/NotFound404'
+        '429':
+          $ref: '#/components/responses/TooManyRequests429'
+        '500':
+          $ref: '#/components/responses/InternalError500'
+      x-rate-limit-tier: HIGH_RISK
+      x-audit: true
+      x-audit-action: LEASE_CREATE
+      x-error-strategy: 403/404
+  /leases/{leaseId}:
+    get:
+      tags:
+      - Core
+      summary: 获取租约详情
+      security:
+      - sessionCookie: []
+      parameters:
+      - name: leaseId
+        in: path
+        required: true
+        schema:
+          type: string
+      - $ref: '#/components/parameters/AcceptLanguage'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Envelope_Lease'
+          headers:
+            ETag:
+              $ref: '#/components/headers/ETag'
+        '404':
+          description: Not Found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest400'
+        '401':
+          $ref: '#/components/responses/Unauthorized401'
+        '403':
+          $ref: '#/components/responses/Forbidden403'
+        '429':
+          $ref: '#/components/responses/TooManyRequests429'
+        '500':
+          $ref: '#/components/responses/InternalError500'
+      x-rate-limit-tier: STANDARD
+      x-error-strategy: 403/404
+    patch:
+      tags:
+      - Core
+      summary: 更新租约（Admin）
+      security:
+      - sessionCookie: []
+        csrfToken: []
+      parameters:
+      - name: leaseId
+        in: path
+        required: true
+        schema:
+          type: string
+      - $ref: '#/components/parameters/AcceptLanguage'
+      - $ref: '#/components/parameters/IfMatch'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Lease'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Envelope_Lease'
+          headers:
+            ETag:
+              $ref: '#/components/headers/ETag'
+        '400':
+          $ref: '#/components/responses/BadRequest400'
+        '401':
+          $ref: '#/components/responses/Unauthorized401'
+        '403':
+          $ref: '#/components/responses/Forbidden403'
+        '404':
+          $ref: '#/components/responses/NotFound404'
+        '409':
+          $ref: '#/components/responses/Conflict409'
+        '429':
+          $ref: '#/components/responses/TooManyRequests429'
+        '500':
+          $ref: '#/components/responses/InternalError500'
+        '412':
+          $ref: '#/components/responses/PreconditionFailed412'
+        '428':
+          $ref: '#/components/responses/PreconditionRequired428'
+      x-rate-limit-tier: HIGH_RISK
+      x-audit: true
+      x-audit-action: LEASE_UPDATE
+      x-error-strategy: 403/404
+      description: 并发控制：该接口启用 If-Match 乐观锁（基于 rowVersion/ETag）。
+  /tickets:
+    get:
+      tags:
+      - Tickets
+      summary: 查询工单列表（Owner/Tenant/Admin）
+      security:
+      - sessionCookie: []
+      parameters:
+      - $ref: '#/components/parameters/AcceptLanguage'
+      - name: status
+        in: query
+        required: false
+        schema:
+          $ref: '#/components/schemas/TicketStatus'
+      - name: ownerId
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: tenantId
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: propertyId
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: leaseId
+        in: query
+        required: false
+        schema:
+          type: string
+      - $ref: '#/components/parameters/Limit'
+      - $ref: '#/components/parameters/Cursor'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Envelope_Inline_7eb7f2677d'
+        '400':
+          $ref: '#/components/responses/BadRequest400'
+        '401':
+          $ref: '#/components/responses/Unauthorized401'
+        '403':
+          $ref: '#/components/responses/Forbidden403'
+        '404':
+          $ref: '#/components/responses/NotFound404'
+        '429':
+          $ref: '#/components/responses/TooManyRequests429'
+        '500':
+          $ref: '#/components/responses/InternalError500'
+      x-rate-limit-tier: STANDARD
+      x-error-strategy: 403/404
+    post:
+      tags:
+      - Tickets
+      summary: 创建工单（Tenant/Owner）
+      security:
+      - sessionCookie: []
+        csrfToken: []
+      parameters:
+      - $ref: '#/components/parameters/AcceptLanguage'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Ticket'
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Envelope_Ticket'
+          headers:
+            ETag:
+              $ref: '#/components/headers/ETag'
+        '400':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized401'
+        '403':
+          $ref: '#/components/responses/Forbidden403'
+        '404':
+          $ref: '#/components/responses/NotFound404'
+        '429':
+          $ref: '#/components/responses/TooManyRequests429'
+        '500':
+          $ref: '#/components/responses/InternalError500'
+      x-rate-limit-tier: STANDARD
+      x-audit: true
+      x-audit-action: TICKET_CREATE
+      x-error-strategy: 403/404
+  /tickets/{ticketId}:
+    get:
+      tags:
+      - Tickets
+      summary: 获取工单详情
+      security:
+      - sessionCookie: []
+      parameters:
+      - name: ticketId
+        in: path
+        required: true
+        schema:
+          type: string
+      - $ref: '#/components/parameters/AcceptLanguage'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Envelope_Ticket'
+          headers:
+            ETag:
+              $ref: '#/components/headers/ETag'
+        '404':
+          description: Not Found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest400'
+        '401':
+          $ref: '#/components/responses/Unauthorized401'
+        '403':
+          $ref: '#/components/responses/Forbidden403'
+        '429':
+          $ref: '#/components/responses/TooManyRequests429'
+        '500':
+          $ref: '#/components/responses/InternalError500'
+      x-rate-limit-tier: STANDARD
+      x-error-strategy: 403/404
+    patch:
+      tags:
+      - Tickets
+      summary: 更新工单（Admin/Owner，或 Tenant 修改自己工单的可编辑字段）
+      description: '当 status=DONE 时，服务端必须校验 resultNote 非空，且具备至少 1 个附件或 linkedExpenseId（与原型一致）。
+
+
+        并发控制：该接口启用 If-Match 乐观锁（基于 rowVersion/ETag）。'
+      security:
+      - sessionCookie: []
+        csrfToken: []
+      parameters:
+      - name: ticketId
+        in: path
+        required: true
+        schema:
+          type: string
+      - $ref: '#/components/parameters/AcceptLanguage'
+      - $ref: '#/components/parameters/IfMatch'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Ticket'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Envelope_Ticket'
+          headers:
+            ETag:
+              $ref: '#/components/headers/ETag'
+        '400':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized401'
+        '403':
+          $ref: '#/components/responses/Forbidden403'
+        '404':
+          $ref: '#/components/responses/NotFound404'
+        '409':
+          $ref: '#/components/responses/Conflict409'
+        '429':
+          $ref: '#/components/responses/TooManyRequests429'
+        '500':
+          $ref: '#/components/responses/InternalError500'
+        '412':
+          $ref: '#/components/responses/PreconditionFailed412'
+        '428':
+          $ref: '#/components/responses/PreconditionRequired428'
+      x-rate-limit-tier: STANDARD
+      x-audit: true
+      x-audit-action: TICKET_UPDATE
+      x-error-strategy: 403/404
+  /tickets/{ticketId}/comments:
+    post:
+      tags:
+      - Tickets
+      summary: 追加工单评论/沟通记录
+      security:
+      - sessionCookie: []
+        csrfToken: []
+      parameters:
+      - name: ticketId
+        in: path
+        required: true
+        schema:
+          type: string
+      - $ref: '#/components/parameters/AcceptLanguage'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TicketComment'
+      responses:
+        '201':
+          description: Ticket Updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Envelope_Ticket'
+          headers:
+            ETag:
+              $ref: '#/components/headers/ETag'
+        '400':
+          $ref: '#/components/responses/BadRequest400'
+        '401':
+          $ref: '#/components/responses/Unauthorized401'
+        '403':
+          $ref: '#/components/responses/Forbidden403'
+        '404':
+          $ref: '#/components/responses/NotFound404'
+        '429':
+          $ref: '#/components/responses/TooManyRequests429'
+        '500':
+          $ref: '#/components/responses/InternalError500'
+      x-rate-limit-tier: STANDARD
+      x-audit: true
+      x-audit-action: TICKET_COMMENT_CREATE
+      x-error-strategy: 403/404
+  /invoices:
+    get:
+      tags:
+      - Billing
+      summary: 查询账单（Owner/Tenant/Admin）
+      security:
+      - sessionCookie: []
+      parameters:
+      - $ref: '#/components/parameters/AcceptLanguage'
+      - name: leaseId
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: tenantId
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: status
+        in: query
+        required: false
+        schema:
+          $ref: '#/components/schemas/InvoiceStatus'
+      - $ref: '#/components/parameters/Limit'
+      - $ref: '#/components/parameters/Cursor'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Envelope_Inline_4b512fd314'
+        '400':
+          $ref: '#/components/responses/BadRequest400'
+        '401':
+          $ref: '#/components/responses/Unauthorized401'
+        '403':
+          $ref: '#/components/responses/Forbidden403'
+        '404':
+          $ref: '#/components/responses/NotFound404'
+        '429':
+          $ref: '#/components/responses/TooManyRequests429'
+        '500':
+          $ref: '#/components/responses/InternalError500'
+      x-rate-limit-tier: STANDARD
+      x-error-strategy: 403/404
+    post:
+      tags:
+      - Billing
+      summary: 创建账单（Admin）
+      security:
+      - sessionCookie: []
+        csrfToken: []
+      parameters:
+      - $ref: '#/components/parameters/AcceptLanguage'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Invoice'
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Envelope_Invoice'
+          headers:
+            ETag:
+              $ref: '#/components/headers/ETag'
+        '400':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized401'
+        '403':
+          $ref: '#/components/responses/Forbidden403'
+        '404':
+          $ref: '#/components/responses/NotFound404'
+        '429':
+          $ref: '#/components/responses/TooManyRequests429'
+        '500':
+          $ref: '#/components/responses/InternalError500'
+      x-rate-limit-tier: HIGH_RISK
+      x-audit: true
+      x-audit-action: INVOICE_CREATE
+      x-error-strategy: 403/404
+  /invoices/{invoiceId}:
+    get:
+      tags:
+      - Billing
+      summary: 获取账单详情
+      security:
+      - sessionCookie: []
+      parameters:
+      - name: invoiceId
+        in: path
+        required: true
+        schema:
+          type: string
+      - $ref: '#/components/parameters/AcceptLanguage'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Envelope_Invoice'
+          headers:
+            ETag:
+              $ref: '#/components/headers/ETag'
+        '404':
+          description: Not Found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest400'
+        '401':
+          $ref: '#/components/responses/Unauthorized401'
+        '403':
+          $ref: '#/components/responses/Forbidden403'
+        '429':
+          $ref: '#/components/responses/TooManyRequests429'
+        '500':
+          $ref: '#/components/responses/InternalError500'
+      x-rate-limit-tier: STANDARD
+      x-error-strategy: 403/404
+    patch:
+      tags:
+      - Billing
+      summary: 更新账单（Admin；locked=true 时禁止修改金额/项目）
+      security:
+      - sessionCookie: []
+        csrfToken: []
+      parameters:
+      - name: invoiceId
+        in: path
+        required: true
+        schema:
+          type: string
+      - $ref: '#/components/parameters/AcceptLanguage'
+      - $ref: '#/components/parameters/IfMatch'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Invoice'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Envelope_Invoice'
+          headers:
+            ETag:
+              $ref: '#/components/headers/ETag'
+        '400':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized401'
+        '403':
+          $ref: '#/components/responses/Forbidden403'
+        '404':
+          $ref: '#/components/responses/NotFound404'
+        '409':
+          $ref: '#/components/responses/Conflict409'
+        '429':
+          $ref: '#/components/responses/TooManyRequests429'
+        '500':
+          $ref: '#/components/responses/InternalError500'
+        '412':
+          $ref: '#/components/responses/PreconditionFailed412'
+        '428':
+          $ref: '#/components/responses/PreconditionRequired428'
+      x-rate-limit-tier: HIGH_RISK
+      x-audit: true
+      x-audit-action: INVOICE_UPDATE
+      x-error-strategy: 403/404
+      description: 并发控制：该接口启用 If-Match 乐观锁（基于 rowVersion/ETag）。
+  /invoices/{invoiceId}/payments:
+    get:
+      tags:
+      - Billing
+      summary: 获取某账单的付款记录
+      security:
+      - sessionCookie: []
+      parameters:
+      - name: invoiceId
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Envelope_Inline_b533d3aceb'
+        '400':
+          $ref: '#/components/responses/BadRequest400'
+        '401':
+          $ref: '#/components/responses/Unauthorized401'
+        '403':
+          $ref: '#/components/responses/Forbidden403'
+        '404':
+          $ref: '#/components/responses/NotFound404'
+        '429':
+          $ref: '#/components/responses/TooManyRequests429'
+        '500':
+          $ref: '#/components/responses/InternalError500'
+      x-rate-limit-tier: STANDARD
+      x-error-strategy: 403/404
+    post:
+      tags:
+      - Billing
+      summary: 新增付款记录（Tenant 上传凭证=SUBMITTED；Admin 可直接 VERIFED）
+      security:
+      - sessionCookie: []
+        csrfToken: []
+      parameters:
+      - name: invoiceId
+        in: path
+        required: true
+        schema:
+          type: string
+      - $ref: '#/components/parameters/AcceptLanguage'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Payment'
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Envelope_Payment'
+          headers:
+            ETag:
+              $ref: '#/components/headers/ETag'
+        '400':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized401'
+        '403':
+          $ref: '#/components/responses/Forbidden403'
+        '404':
+          $ref: '#/components/responses/NotFound404'
+        '429':
+          $ref: '#/components/responses/TooManyRequests429'
+        '500':
+          $ref: '#/components/responses/InternalError500'
+      x-rate-limit-tier: HIGH_RISK
+      x-audit: true
+      x-audit-action: PAYMENT_SUBMIT
+      x-error-strategy: 403/404
+  /payments/{paymentId}/verify:
+    post:
+      tags:
+      - Billing
+      summary: 审核通过付款凭证（Admin）
+      security:
+      - sessionCookie: []
+        csrfToken: []
+      parameters:
+      - name: paymentId
+        in: path
+        required: true
+        schema:
+          type: string
+      - $ref: '#/components/parameters/AcceptLanguage'
+      - $ref: '#/components/parameters/IfMatch'
+      responses:
+        '200':
+          description: Invoice Updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Envelope_Invoice'
+          headers:
+            ETag:
+              $ref: '#/components/headers/ETag'
+        '404':
+          description: Not Found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest400'
+        '401':
+          $ref: '#/components/responses/Unauthorized401'
+        '403':
+          $ref: '#/components/responses/Forbidden403'
+        '429':
+          $ref: '#/components/responses/TooManyRequests429'
+        '500':
+          $ref: '#/components/responses/InternalError500'
+        '412':
+          $ref: '#/components/responses/PreconditionFailed412'
+        '428':
+          $ref: '#/components/responses/PreconditionRequired428'
+      x-rate-limit-tier: HIGH_RISK
+      x-audit: true
+      x-audit-action: PAYMENT_SUBMIT
+      x-error-strategy: 403/404
+      description: 并发控制：该接口启用 If-Match 乐观锁（基于 rowVersion/ETag）。
+  /payments/{paymentId}/reject:
+    post:
+      tags:
+      - Billing
+      summary: 驳回付款凭证（Admin）
+      security:
+      - sessionCookie: []
+        csrfToken: []
+      parameters:
+      - name: paymentId
+        in: path
+        required: true
+        schema:
+          type: string
+      - $ref: '#/components/parameters/AcceptLanguage'
+      - $ref: '#/components/parameters/IfMatch'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason:
+                  type: string
+              required:
+              - reason
+              additionalProperties: false
+      responses:
+        '200':
+          description: Invoice Updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Envelope_Invoice'
+          headers:
+            ETag:
+              $ref: '#/components/headers/ETag'
+        '400':
+          $ref: '#/components/responses/BadRequest400'
+        '401':
+          $ref: '#/components/responses/Unauthorized401'
+        '403':
+          $ref: '#/components/responses/Forbidden403'
+        '404':
+          $ref: '#/components/responses/NotFound404'
+        '429':
+          $ref: '#/components/responses/TooManyRequests429'
+        '500':
+          $ref: '#/components/responses/InternalError500'
+        '412':
+          $ref: '#/components/responses/PreconditionFailed412'
+        '428':
+          $ref: '#/components/responses/PreconditionRequired428'
+      x-rate-limit-tier: HIGH_RISK
+      x-audit: true
+      x-audit-action: PAYMENT_SUBMIT
+      x-error-strategy: 403/404
+      description: 并发控制：该接口启用 If-Match 乐观锁（基于 rowVersion/ETag）。
+  /payments/{paymentId}/reverse:
+    post:
+      tags:
+      - Billing
+      summary: 冲正/撤销付款记录（Admin）
+      security:
+      - sessionCookie: []
+        csrfToken: []
+      parameters:
+      - name: paymentId
+        in: path
+        required: true
+        schema:
+          type: string
+      - $ref: '#/components/parameters/IfMatch'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason:
+                  type: string
+              required:
+              - reason
+              additionalProperties: false
+      responses:
+        '200':
+          description: Invoice Updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Envelope_Invoice'
+          headers:
+            ETag:
+              $ref: '#/components/headers/ETag'
+        '400':
+          $ref: '#/components/responses/BadRequest400'
+        '401':
+          $ref: '#/components/responses/Unauthorized401'
+        '403':
+          $ref: '#/components/responses/Forbidden403'
+        '404':
+          $ref: '#/components/responses/NotFound404'
+        '429':
+          $ref: '#/components/responses/TooManyRequests429'
+        '500':
+          $ref: '#/components/responses/InternalError500'
+        '412':
+          $ref: '#/components/responses/PreconditionFailed412'
+        '428':
+          $ref: '#/components/responses/PreconditionRequired428'
+      x-rate-limit-tier: HIGH_RISK
+      x-audit: true
+      x-audit-action: PAYMENT_SUBMIT
+      x-error-strategy: 403/404
+      description: 并发控制：该接口启用 If-Match 乐观锁（基于 rowVersion/ETag）。
+  /files/presign-upload:
+    post:
+      tags:
+      - Files
+      summary: 获取直传对象存储的签名上传 URL（推荐）
+      security:
+      - sessionCookie: []
+        csrfToken: []
+      parameters:
+      - $ref: '#/components/parameters/AcceptLanguage'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PresignUploadRequest'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Envelope_PresignUploadResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest400'
+        '401':
+          $ref: '#/components/responses/Unauthorized401'
+        '403':
+          $ref: '#/components/responses/Forbidden403'
+        '404':
+          $ref: '#/components/responses/NotFound404'
+        '429':
+          $ref: '#/components/responses/TooManyRequests429'
+        '500':
+          $ref: '#/components/responses/InternalError500'
+      x-rate-limit-tier: STANDARD
+      x-error-strategy: 403/404
+  /files/complete-upload:
+    post:
+      tags:
+      - Files
+      summary: 完成上传并落库 Document 元数据
+      security:
+      - sessionCookie: []
+        csrfToken: []
+      parameters:
+      - $ref: '#/components/parameters/AcceptLanguage'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CompleteUploadRequest'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Envelope_Document'
+          headers:
+            ETag:
+              $ref: '#/components/headers/ETag'
+        '400':
+          $ref: '#/components/responses/BadRequest400'
+        '401':
+          $ref: '#/components/responses/Unauthorized401'
+        '403':
+          $ref: '#/components/responses/Forbidden403'
+        '404':
+          $ref: '#/components/responses/NotFound404'
+        '429':
+          $ref: '#/components/responses/TooManyRequests429'
+        '500':
+          $ref: '#/components/responses/InternalError500'
+      x-rate-limit-tier: STANDARD
+      x-error-strategy: 403/404
+  /documents:
+    get:
+      tags:
+      - Files
+      summary: 查询文档列表（按可见性+权限过滤）
+      security:
+      - sessionCookie: []
+      parameters:
+      - $ref: '#/components/parameters/AcceptLanguage'
+      - name: ownerId
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: tenantId
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: leaseId
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: invoiceId
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: ticketId
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: entityType
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: entityId
+        in: query
+        required: false
+        schema:
+          type: string
+      - $ref: '#/components/parameters/Limit'
+      - $ref: '#/components/parameters/Cursor'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Envelope_Inline_d5ddc47f0f'
+        '400':
+          $ref: '#/components/responses/BadRequest400'
+        '401':
+          $ref: '#/components/responses/Unauthorized401'
+        '403':
+          $ref: '#/components/responses/Forbidden403'
+        '404':
+          $ref: '#/components/responses/NotFound404'
+        '429':
+          $ref: '#/components/responses/TooManyRequests429'
+        '500':
+          $ref: '#/components/responses/InternalError500'
+      x-rate-limit-tier: STANDARD
+      x-error-strategy: 403/404
+  /documents/{docId}:
+    get:
+      tags:
+      - Files
+      summary: 获取文档元数据（含短期 downloadUrl）
+      security:
+      - sessionCookie: []
+      parameters:
+      - name: docId
+        in: path
+        required: true
+        schema:
+          type: string
+      - $ref: '#/components/parameters/AcceptLanguage'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Envelope_Document'
+          headers:
+            ETag:
+              $ref: '#/components/headers/ETag'
+        '404':
+          description: Not Found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest400'
+        '401':
+          $ref: '#/components/responses/Unauthorized401'
+        '403':
+          $ref: '#/components/responses/Forbidden403'
+        '429':
+          $ref: '#/components/responses/TooManyRequests429'
+        '500':
+          $ref: '#/components/responses/InternalError500'
+      x-rate-limit-tier: STANDARD
+      x-error-strategy: 403/404
+    patch:
+      tags:
+      - Files
+      summary: 更新文档元数据（可见性/到期日等）
+      security:
+      - sessionCookie: []
+        csrfToken: []
+      parameters:
+      - name: docId
+        in: path
+        required: true
+        schema:
+          type: string
+      - $ref: '#/components/parameters/AcceptLanguage'
+      - $ref: '#/components/parameters/IfMatch'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                docType:
+                  $ref: '#/components/schemas/DocumentDocType'
+                expiresAt:
+                  type: string
+                  format: date
+                  nullable: true
+                visibility:
+                  $ref: '#/components/schemas/DocumentVisibility'
+              additionalProperties: false
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Envelope_Document'
+          headers:
+            ETag:
+              $ref: '#/components/headers/ETag'
+        '400':
+          $ref: '#/components/responses/BadRequest400'
+        '401':
+          $ref: '#/components/responses/Unauthorized401'
+        '403':
+          $ref: '#/components/responses/Forbidden403'
+        '404':
+          $ref: '#/components/responses/NotFound404'
+        '409':
+          $ref: '#/components/responses/Conflict409'
+        '429':
+          $ref: '#/components/responses/TooManyRequests429'
+        '500':
+          $ref: '#/components/responses/InternalError500'
+        '412':
+          $ref: '#/components/responses/PreconditionFailed412'
+        '428':
+          $ref: '#/components/responses/PreconditionRequired428'
+      x-rate-limit-tier: HIGH_RISK
+      x-audit: true
+      x-audit-action: DOCUMENT_UPDATE
+      x-error-strategy: 403/404
+      description: 并发控制：该接口启用 If-Match 乐观锁（基于 rowVersion/ETag）。
+  /documents/{docId}/download:
+    get:
+      tags:
+      - Files
+      summary: 获取下载链接（或 302 重定向）
+      security:
+      - sessionCookie: []
+      parameters:
+      - name: docId
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '302':
+          description: Redirect to signed URL
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Envelope_Document'
+          headers:
+            ETag:
+              $ref: '#/components/headers/ETag'
+        '400':
+          $ref: '#/components/responses/BadRequest400'
+        '401':
+          $ref: '#/components/responses/Unauthorized401'
+        '403':
+          $ref: '#/components/responses/Forbidden403'
+        '404':
+          $ref: '#/components/responses/NotFound404'
+        '429':
+          $ref: '#/components/responses/TooManyRequests429'
+        '500':
+          $ref: '#/components/responses/InternalError500'
+        '409':
+          $ref: '#/components/responses/Conflict409'
+      x-rate-limit-tier: HIGH_RISK
+      x-audit: true
+      x-audit-action: DOCUMENT_DOWNLOAD
+      x-error-strategy: 403/404
+      description: 仅当 Document.scanStatus=READY 时可下载/重定向；否则返回 409 Conflict。
+  /notifications:
+    get:
+      tags:
+      - Notifications
+      summary: 查询通知（按可见性与权限过滤）
+      security:
+      - sessionCookie: []
+      parameters:
+      - $ref: '#/components/parameters/AcceptLanguage'
+      - name: unreadOnly
+        in: query
+        schema:
+          type: boolean
+        required: false
+      - $ref: '#/components/parameters/Limit'
+      - $ref: '#/components/parameters/Cursor'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Envelope_Inline_8caf88b7df'
+        '400':
+          $ref: '#/components/responses/BadRequest400'
+        '401':
+          $ref: '#/components/responses/Unauthorized401'
+        '403':
+          $ref: '#/components/responses/Forbidden403'
+        '404':
+          $ref: '#/components/responses/NotFound404'
+        '429':
+          $ref: '#/components/responses/TooManyRequests429'
+        '500':
+          $ref: '#/components/responses/InternalError500'
+      x-rate-limit-tier: STANDARD
+      x-error-strategy: 403/404
+  /notifications/{notificationId}:
+    patch:
+      tags:
+      - Notifications
+      summary: 标记通知已读/未读
+      security:
+      - sessionCookie: []
+        csrfToken: []
+      parameters:
+      - name: notificationId
+        in: path
+        required: true
+        schema:
+          type: string
+      - $ref: '#/components/parameters/IfMatch'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                read:
+                  type: boolean
+              required:
+              - read
+              additionalProperties: false
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Envelope_Notification'
+          headers:
+            ETag:
+              $ref: '#/components/headers/ETag'
+        '400':
+          $ref: '#/components/responses/BadRequest400'
+        '401':
+          $ref: '#/components/responses/Unauthorized401'
+        '403':
+          $ref: '#/components/responses/Forbidden403'
+        '404':
+          $ref: '#/components/responses/NotFound404'
+        '409':
+          $ref: '#/components/responses/Conflict409'
+        '429':
+          $ref: '#/components/responses/TooManyRequests429'
+        '500':
+          $ref: '#/components/responses/InternalError500'
+        '412':
+          $ref: '#/components/responses/PreconditionFailed412'
+        '428':
+          $ref: '#/components/responses/PreconditionRequired428'
+      x-rate-limit-tier: STANDARD
+      x-error-strategy: '403'
+      description: 并发控制：该接口启用 If-Match 乐观锁（基于 rowVersion/ETag）。
+  /notifications/read-all:
+    post:
+      tags:
+      - Notifications
+      summary: 全部标为已读
+      security:
+      - sessionCookie: []
+        csrfToken: []
+      responses:
+        '204':
+          description: No Content
+        '400':
+          $ref: '#/components/responses/BadRequest400'
+        '401':
+          $ref: '#/components/responses/Unauthorized401'
+        '403':
+          $ref: '#/components/responses/Forbidden403'
+        '429':
+          $ref: '#/components/responses/TooManyRequests429'
+        '500':
+          $ref: '#/components/responses/InternalError500'
+      x-rate-limit-tier: STANDARD
+      x-error-strategy: '403'
+  /document-requests:
+    get:
+      tags:
+      - Doc Requests
+      summary: 查询资料请求（Tenant/Owner/Admin）
+      security:
+      - sessionCookie: []
+      parameters:
+      - $ref: '#/components/parameters/AcceptLanguage'
+      - name: applicationId
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: tenantId
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: status
+        in: query
+        required: false
+        schema:
+          $ref: '#/components/schemas/DocRequestStatus'
+      - $ref: '#/components/parameters/Limit'
+      - $ref: '#/components/parameters/Cursor'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Envelope_Inline_3620a3557f'
+        '400':
+          $ref: '#/components/responses/BadRequest400'
+        '401':
+          $ref: '#/components/responses/Unauthorized401'
+        '403':
+          $ref: '#/components/responses/Forbidden403'
+        '404':
+          $ref: '#/components/responses/NotFound404'
+        '429':
+          $ref: '#/components/responses/TooManyRequests429'
+        '500':
+          $ref: '#/components/responses/InternalError500'
+      x-rate-limit-tier: STANDARD
+      x-error-strategy: 403/404
+    post:
+      tags:
+      - Doc Requests
+      summary: 创建资料请求（Admin）
+      security:
+      - sessionCookie: []
+        csrfToken: []
+      parameters:
+      - $ref: '#/components/parameters/AcceptLanguage'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DocumentRequest'
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Envelope_DocumentRequest'
+          headers:
+            ETag:
+              $ref: '#/components/headers/ETag'
+        '400':
+          $ref: '#/components/responses/BadRequest400'
+        '401':
+          $ref: '#/components/responses/Unauthorized401'
+        '403':
+          $ref: '#/components/responses/Forbidden403'
+        '404':
+          $ref: '#/components/responses/NotFound404'
+        '429':
+          $ref: '#/components/responses/TooManyRequests429'
+        '500':
+          $ref: '#/components/responses/InternalError500'
+      x-rate-limit-tier: STANDARD
+      x-audit: true
+      x-audit-action: DOCREQ_CREATE
+      x-error-strategy: 403/404
+  /document-requests/{requestId}:
+    get:
+      tags:
+      - Doc Requests
+      summary: 获取资料请求详情
+      security:
+      - sessionCookie: []
+      parameters:
+      - name: requestId
+        in: path
+        required: true
+        schema:
+          type: string
+      - $ref: '#/components/parameters/AcceptLanguage'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Envelope_DocumentRequest'
+          headers:
+            ETag:
+              $ref: '#/components/headers/ETag'
+        '404':
+          description: Not Found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest400'
+        '401':
+          $ref: '#/components/responses/Unauthorized401'
+        '403':
+          $ref: '#/components/responses/Forbidden403'
+        '429':
+          $ref: '#/components/responses/TooManyRequests429'
+        '500':
+          $ref: '#/components/responses/InternalError500'
+      x-rate-limit-tier: STANDARD
+      x-error-strategy: 403/404
+    patch:
+      tags:
+      - Doc Requests
+      summary: 更新资料请求（Admin）
+      security:
+      - sessionCookie: []
+        csrfToken: []
+      parameters:
+      - name: requestId
+        in: path
+        required: true
+        schema:
+          type: string
+      - $ref: '#/components/parameters/AcceptLanguage'
+      - $ref: '#/components/parameters/IfMatch'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DocumentRequest'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Envelope_DocumentRequest'
+          headers:
+            ETag:
+              $ref: '#/components/headers/ETag'
+        '400':
+          $ref: '#/components/responses/BadRequest400'
+        '401':
+          $ref: '#/components/responses/Unauthorized401'
+        '403':
+          $ref: '#/components/responses/Forbidden403'
+        '404':
+          $ref: '#/components/responses/NotFound404'
+        '409':
+          $ref: '#/components/responses/Conflict409'
+        '429':
+          $ref: '#/components/responses/TooManyRequests429'
+        '500':
+          $ref: '#/components/responses/InternalError500'
+        '412':
+          $ref: '#/components/responses/PreconditionFailed412'
+        '428':
+          $ref: '#/components/responses/PreconditionRequired428'
+      x-rate-limit-tier: STANDARD
+      x-audit: true
+      x-audit-action: DOCREQ_UPDATE
+      x-error-strategy: 403/404
+      description: 并发控制：该接口启用 If-Match 乐观锁（基于 rowVersion/ETag）。
+  /document-requests/{requestId}/submit:
+    post:
+      tags:
+      - Doc Requests
+      summary: 提交资料（Tenant：上传文件后绑定到 request）
+      security:
+      - sessionCookie: []
+        csrfToken: []
+      parameters:
+      - name: requestId
+        in: path
+        required: true
+        schema:
+          type: string
+      - $ref: '#/components/parameters/AcceptLanguage'
+      - $ref: '#/components/parameters/IfMatch'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                documentIds:
+                  type: array
+                  items:
+                    type: string
+                  minItems: 1
+              required:
+              - documentIds
+              additionalProperties: false
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Envelope_DocumentRequest'
+          headers:
+            ETag:
+              $ref: '#/components/headers/ETag'
+        '400':
+          $ref: '#/components/responses/BadRequest400'
+        '401':
+          $ref: '#/components/responses/Unauthorized401'
+        '403':
+          $ref: '#/components/responses/Forbidden403'
+        '404':
+          $ref: '#/components/responses/NotFound404'
+        '429':
+          $ref: '#/components/responses/TooManyRequests429'
+        '500':
+          $ref: '#/components/responses/InternalError500'
+        '412':
+          $ref: '#/components/responses/PreconditionFailed412'
+        '428':
+          $ref: '#/components/responses/PreconditionRequired428'
+      x-rate-limit-tier: HIGH_RISK
+      x-audit: true
+      x-audit-action: DOCREQ_SUBMIT
+      x-error-strategy: 403/404
+      description: 并发控制：该接口启用 If-Match 乐观锁（基于 rowVersion/ETag）。
+  /document-requests/{requestId}/approve:
+    post:
+      tags:
+      - Doc Requests
+      summary: 审核通过资料（Admin）
+      security:
+      - sessionCookie: []
+        csrfToken: []
+      parameters:
+      - name: requestId
+        in: path
+        required: true
+        schema:
+          type: string
+      - $ref: '#/components/parameters/AcceptLanguage'
+      - $ref: '#/components/parameters/IfMatch'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Envelope_DocumentRequest'
+          headers:
+            ETag:
+              $ref: '#/components/headers/ETag'
+        '400':
+          $ref: '#/components/responses/BadRequest400'
+        '401':
+          $ref: '#/components/responses/Unauthorized401'
+        '403':
+          $ref: '#/components/responses/Forbidden403'
+        '404':
+          $ref: '#/components/responses/NotFound404'
+        '429':
+          $ref: '#/components/responses/TooManyRequests429'
+        '500':
+          $ref: '#/components/responses/InternalError500'
+        '412':
+          $ref: '#/components/responses/PreconditionFailed412'
+        '428':
+          $ref: '#/components/responses/PreconditionRequired428'
+      x-rate-limit-tier: HIGH_RISK
+      x-audit: true
+      x-audit-action: DOCREQ_DECIDE
+      x-error-strategy: 403/404
+      description: 并发控制：该接口启用 If-Match 乐观锁（基于 rowVersion/ETag）。
+  /document-requests/{requestId}/reject:
+    post:
+      tags:
+      - Doc Requests
+      summary: 驳回资料（Admin：填写原因，Tenant 端可见）
+      security:
+      - sessionCookie: []
+        csrfToken: []
+      parameters:
+      - name: requestId
+        in: path
+        required: true
+        schema:
+          type: string
+      - $ref: '#/components/parameters/AcceptLanguage'
+      - $ref: '#/components/parameters/IfMatch'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                adminNote:
+                  type: string
+              required:
+              - adminNote
+              additionalProperties: false
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Envelope_DocumentRequest'
+          headers:
+            ETag:
+              $ref: '#/components/headers/ETag'
+        '400':
+          $ref: '#/components/responses/BadRequest400'
+        '401':
+          $ref: '#/components/responses/Unauthorized401'
+        '403':
+          $ref: '#/components/responses/Forbidden403'
+        '404':
+          $ref: '#/components/responses/NotFound404'
+        '429':
+          $ref: '#/components/responses/TooManyRequests429'
+        '500':
+          $ref: '#/components/responses/InternalError500'
+        '412':
+          $ref: '#/components/responses/PreconditionFailed412'
+        '428':
+          $ref: '#/components/responses/PreconditionRequired428'
+      x-rate-limit-tier: HIGH_RISK
+      x-audit: true
+      x-audit-action: DOCREQ_DECIDE
+      x-error-strategy: 403/404
+      description: 并发控制：该接口启用 If-Match 乐观锁（基于 rowVersion/ETag）。
+  /document-requests/{requestId}/waive:
+    post:
+      tags:
+      - Doc Requests
+      summary: 豁免资料（Admin）
+      security:
+      - sessionCookie: []
+        csrfToken: []
+      parameters:
+      - name: requestId
+        in: path
+        required: true
+        schema:
+          type: string
+      - $ref: '#/components/parameters/AcceptLanguage'
+      - $ref: '#/components/parameters/IfMatch'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Envelope_DocumentRequest'
+          headers:
+            ETag:
+              $ref: '#/components/headers/ETag'
+        '400':
+          $ref: '#/components/responses/BadRequest400'
+        '401':
+          $ref: '#/components/responses/Unauthorized401'
+        '403':
+          $ref: '#/components/responses/Forbidden403'
+        '404':
+          $ref: '#/components/responses/NotFound404'
+        '429':
+          $ref: '#/components/responses/TooManyRequests429'
+        '500':
+          $ref: '#/components/responses/InternalError500'
+        '412':
+          $ref: '#/components/responses/PreconditionFailed412'
+        '428':
+          $ref: '#/components/responses/PreconditionRequired428'
+      x-rate-limit-tier: HIGH_RISK
+      x-audit: true
+      x-audit-action: DOCREQ_DECIDE
+      x-error-strategy: 403/404
+      description: 并发控制：该接口启用 If-Match 乐观锁（基于 rowVersion/ETag）。
+  /applications:
+    get:
+      tags:
+      - Applications
+      summary: 查询申请流程（Tenant/Admin）
+      security:
+      - sessionCookie: []
+      parameters:
+      - $ref: '#/components/parameters/AcceptLanguage'
+      - name: tenantId
+        in: query
+        required: false
+        schema:
+          type: string
+      - $ref: '#/components/parameters/Limit'
+      - $ref: '#/components/parameters/Cursor'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Envelope_Inline_47c78ed493'
+        '400':
+          $ref: '#/components/responses/BadRequest400'
+        '401':
+          $ref: '#/components/responses/Unauthorized401'
+        '403':
+          $ref: '#/components/responses/Forbidden403'
+        '404':
+          $ref: '#/components/responses/NotFound404'
+        '429':
+          $ref: '#/components/responses/TooManyRequests429'
+        '500':
+          $ref: '#/components/responses/InternalError500'
+      x-rate-limit-tier: STANDARD
+      x-error-strategy: 403/404
+    post:
+      tags:
+      - Applications
+      summary: 创建申请（Admin/CRM）
+      security:
+      - sessionCookie: []
+        csrfToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Application'
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Envelope_Application'
+          headers:
+            ETag:
+              $ref: '#/components/headers/ETag'
+        '400':
+          $ref: '#/components/responses/BadRequest400'
+        '401':
+          $ref: '#/components/responses/Unauthorized401'
+        '403':
+          $ref: '#/components/responses/Forbidden403'
+        '404':
+          $ref: '#/components/responses/NotFound404'
+        '429':
+          $ref: '#/components/responses/TooManyRequests429'
+        '500':
+          $ref: '#/components/responses/InternalError500'
+      x-rate-limit-tier: STANDARD
+      x-audit: true
+      x-audit-action: APPLICATION_CREATE
+      x-error-strategy: 403/404
+  /applications/{applicationId}:
+    get:
+      tags:
+      - Applications
+      summary: 获取申请详情
+      security:
+      - sessionCookie: []
+      parameters:
+      - name: applicationId
+        in: path
+        required: true
+        schema:
+          type: string
+      - $ref: '#/components/parameters/AcceptLanguage'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Envelope_Application'
+          headers:
+            ETag:
+              $ref: '#/components/headers/ETag'
+        '400':
+          $ref: '#/components/responses/BadRequest400'
+        '401':
+          $ref: '#/components/responses/Unauthorized401'
+        '403':
+          $ref: '#/components/responses/Forbidden403'
+        '404':
+          $ref: '#/components/responses/NotFound404'
+        '429':
+          $ref: '#/components/responses/TooManyRequests429'
+        '500':
+          $ref: '#/components/responses/InternalError500'
+      x-rate-limit-tier: STANDARD
+      x-error-strategy: 403/404
+    patch:
+      tags:
+      - Applications
+      summary: 更新申请（Tenant/Admin）
+      security:
+      - sessionCookie: []
+        csrfToken: []
+      parameters:
+      - name: applicationId
+        in: path
+        required: true
+        schema:
+          type: string
+      - $ref: '#/components/parameters/AcceptLanguage'
+      - $ref: '#/components/parameters/IfMatch'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Application'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Envelope_Application'
+          headers:
+            ETag:
+              $ref: '#/components/headers/ETag'
+        '400':
+          $ref: '#/components/responses/BadRequest400'
+        '401':
+          $ref: '#/components/responses/Unauthorized401'
+        '403':
+          $ref: '#/components/responses/Forbidden403'
+        '404':
+          $ref: '#/components/responses/NotFound404'
+        '409':
+          $ref: '#/components/responses/Conflict409'
+        '429':
+          $ref: '#/components/responses/TooManyRequests429'
+        '500':
+          $ref: '#/components/responses/InternalError500'
+        '412':
+          $ref: '#/components/responses/PreconditionFailed412'
+        '428':
+          $ref: '#/components/responses/PreconditionRequired428'
+      x-rate-limit-tier: HIGH_RISK
+      x-audit: true
+      x-audit-action: APPLICATION_UPDATE
+      x-error-strategy: 403/404
+      description: 并发控制：该接口启用 If-Match 乐观锁（基于 rowVersion/ETag）。
+  /applications/{applicationId}/match-proposals:
+    get:
+      tags:
+      - Applications
+      summary: 获取某申请的匹配提案
+      security:
+      - sessionCookie: []
+      parameters:
+      - name: applicationId
+        in: path
+        required: true
+        schema:
+          type: string
+      - $ref: '#/components/parameters/AcceptLanguage'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Envelope_Inline_58b21c26ef'
+        '400':
+          $ref: '#/components/responses/BadRequest400'
+        '401':
+          $ref: '#/components/responses/Unauthorized401'
+        '403':
+          $ref: '#/components/responses/Forbidden403'
+        '404':
+          $ref: '#/components/responses/NotFound404'
+        '429':
+          $ref: '#/components/responses/TooManyRequests429'
+        '500':
+          $ref: '#/components/responses/InternalError500'
+      x-rate-limit-tier: STANDARD
+      x-error-strategy: 403/404
+    post:
+      tags:
+      - Applications
+      summary: 创建匹配提案（Admin）
+      security:
+      - sessionCookie: []
+        csrfToken: []
+      parameters:
+      - name: applicationId
+        in: path
+        required: true
+        schema:
+          type: string
+      - $ref: '#/components/parameters/AcceptLanguage'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MatchProposal'
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Envelope_MatchProposal'
+          headers:
+            ETag:
+              $ref: '#/components/headers/ETag'
+        '400':
+          $ref: '#/components/responses/BadRequest400'
+        '401':
+          $ref: '#/components/responses/Unauthorized401'
+        '403':
+          $ref: '#/components/responses/Forbidden403'
+        '404':
+          $ref: '#/components/responses/NotFound404'
+        '429':
+          $ref: '#/components/responses/TooManyRequests429'
+        '500':
+          $ref: '#/components/responses/InternalError500'
+      x-rate-limit-tier: STANDARD
+      x-audit: true
+      x-audit-action: MATCH_PROPOSAL_CREATE
+      x-error-strategy: 403/404
+  /match-proposals/{proposalId}/respond:
+    post:
+      tags:
+      - Applications
+      summary: 租客响应匹配提案（接受/拒绝）
+      security:
+      - sessionCookie: []
+        csrfToken: []
+      parameters:
+      - name: proposalId
+        in: path
+        required: true
+        schema:
+          type: string
+      - $ref: '#/components/parameters/AcceptLanguage'
+      - $ref: '#/components/parameters/IfMatch'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                action:
+                  type: string
+                  enum:
+                  - ACCEPT
+                  - DECLINE
+              required:
+              - action
+              additionalProperties: false
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Envelope_MatchProposal'
+          headers:
+            ETag:
+              $ref: '#/components/headers/ETag'
+        '400':
+          $ref: '#/components/responses/BadRequest400'
+        '401':
+          $ref: '#/components/responses/Unauthorized401'
+        '403':
+          $ref: '#/components/responses/Forbidden403'
+        '404':
+          $ref: '#/components/responses/NotFound404'
+        '429':
+          $ref: '#/components/responses/TooManyRequests429'
+        '500':
+          $ref: '#/components/responses/InternalError500'
+        '412':
+          $ref: '#/components/responses/PreconditionFailed412'
+        '428':
+          $ref: '#/components/responses/PreconditionRequired428'
+      x-rate-limit-tier: STANDARD
+      x-audit: true
+      x-audit-action: MATCH_PROPOSAL_CREATE
+      x-error-strategy: 403/404
+      description: 并发控制：该接口启用 If-Match 乐观锁（基于 rowVersion/ETag）。
+  /health:
+    get:
+      tags:
+      - Ops
+      summary: 健康检查
+      description: 供 LB/监控探活使用；不返回敏感信息。
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Envelope_HealthResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest400'
+        '429':
+          $ref: '#/components/responses/TooManyRequests429'
+        '500':
+          $ref: '#/components/responses/InternalError500'
+      x-rate-limit-tier: STANDARD
+      x-error-strategy: '400'
+  /invitations:
+    post:
+      tags:
+      - Auth & Profile
+      summary: 创建邀请（Admin/Staff）
+      description: 创建一次性邀请（绑定 leaseId + expiresAt）。不回传 one_time_token 明文（建议邮件/一次性展示）。
+      security:
+      - sessionCookie: []
+        csrfToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InvitationCreateRequest'
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Envelope_Invitation'
+        '400':
+          $ref: '#/components/responses/BadRequest400'
+        '401':
+          $ref: '#/components/responses/Unauthorized401'
+        '403':
+          $ref: '#/components/responses/Forbidden403'
+        '404':
+          $ref: '#/components/responses/NotFound404'
+        '429':
+          $ref: '#/components/responses/TooManyRequests429'
+        '500':
+          $ref: '#/components/responses/InternalError500'
+      x-rate-limit-tier: HIGH_RISK
+      x-audit: true
+      x-audit-action: INVITATION_CREATE
+      x-error-strategy: 403/404
+  /invitations/{token}/accept:
+    post:
+      tags:
+      - Auth & Profile
+      summary: 接受邀请并激活账号（Tenant）
+      description: 使用一次性 token 激活账号并兑换会话（成功后 Set-Cookie）。token 过期/已用返回 400。
+      parameters:
+      - name: token
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Envelope_UserMe'
+        '400':
+          $ref: '#/components/responses/BadRequest400'
+        '429':
+          $ref: '#/components/responses/TooManyRequests429'
+        '500':
+          $ref: '#/components/responses/InternalError500'
+      x-rate-limit-tier: HIGH_RISK
+      x-audit: true
+      x-audit-action: INVITATION_ACCEPT
+      x-error-strategy: '400'
+  /gdpr/export:
+    post:
+      tags:
+      - GDPR
+      summary: 导出数据（Admin）
+      description: 触发 GDPR 导出任务（异步 job）。导出文件需加密且下载链接短期有效。
+      security:
+      - sessionCookie: []
+        csrfToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GDPRExportRequest'
+      responses:
+        '202':
+          description: Accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Envelope_GDPRJob'
+        '400':
+          $ref: '#/components/responses/BadRequest400'
+        '401':
+          $ref: '#/components/responses/Unauthorized401'
+        '403':
+          $ref: '#/components/responses/Forbidden403'
+        '404':
+          $ref: '#/components/responses/NotFound404'
+        '429':
+          $ref: '#/components/responses/TooManyRequests429'
+        '500':
+          $ref: '#/components/responses/InternalError500'
+      x-rate-limit-tier: HIGH_RISK
+      x-audit: true
+      x-audit-action: GDPR_EXPORT
+      x-error-strategy: 403/404
+  /gdpr/erase:
+    post:
+      tags:
+      - GDPR
+      summary: 删除/匿名化请求（Admin）
+      description: 触发 GDPR 删除/匿名化任务（异步 job）。默认建议匿名化优先，并保留财务必要字段。
+      security:
+      - sessionCookie: []
+        csrfToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GDPREraseRequest'
+      responses:
+        '202':
+          description: Accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Envelope_GDPRJob'
+        '400':
+          $ref: '#/components/responses/BadRequest400'
+        '401':
+          $ref: '#/components/responses/Unauthorized401'
+        '403':
+          $ref: '#/components/responses/Forbidden403'
+        '404':
+          $ref: '#/components/responses/NotFound404'
+        '429':
+          $ref: '#/components/responses/TooManyRequests429'
+        '500':
+          $ref: '#/components/responses/InternalError500'
+      x-rate-limit-tier: HIGH_RISK
+      x-audit: true
+      x-audit-action: GDPR_ERASE
+      x-error-strategy: 403/404
+  /properties/{propertyId}/images:
+    post:
+      tags:
+      - Files
+      - Core
+      summary: 上传房源图片（对齐验收，兼容）
+      description: 建议优先走 `/files/presign-upload` + `/files/complete-upload`（signed
+        URL）。本接口仅用于兼容旧流程/验收口径：最终落库为 Document(docType=PropertyImage, propertyId=...)。
+      security:
+      - sessionCookie: []
+        csrfToken: []
+      parameters:
+      - name: propertyId
+        in: path
+        required: true
+        schema:
+          type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - docId
+              properties:
+                docId:
+                  type: string
+                  description: 已完成上传的 Document ID（推荐，配合 signed URL 流程）
+          multipart/form-data:
+            schema:
+              type: object
+              required:
+              - file
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: 兼容：直接上传文件（不推荐，建议用 signed URL）
+                fileName:
+                  type: string
+                  nullable: true
+                mime:
+                  type: string
+                  nullable: true
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Envelope_Document'
+          headers:
+            ETag:
+              $ref: '#/components/headers/ETag'
+        '400':
+          $ref: '#/components/responses/BadRequest400'
+        '401':
+          $ref: '#/components/responses/Unauthorized401'
+        '403':
+          $ref: '#/components/responses/Forbidden403'
+        '404':
+          $ref: '#/components/responses/NotFound404'
+        '429':
+          $ref: '#/components/responses/TooManyRequests429'
+        '500':
+          $ref: '#/components/responses/InternalError500'
+      x-rate-limit-tier: HIGH_RISK
+      x-audit: true
+      x-audit-action: PROPERTY_IMAGE_UPLOAD
+      x-error-strategy: 403/404
+  /gdpr/jobs/{jobId}:
+    get:
+      tags:
+      - GDPR
+      summary: 查询 GDPR 任务状态（Admin）
+      description: 用于轮询异步 GDPR 导出/删除任务的进度与结果（downloadUrl 可能为空，建议结合通知）。
+      security:
+      - sessionCookie: []
+      parameters:
+      - name: jobId
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Envelope_GDPRJob'
+        '400':
+          $ref: '#/components/responses/BadRequest400'
+        '401':
+          $ref: '#/components/responses/Unauthorized401'
+        '403':
+          $ref: '#/components/responses/Forbidden403'
+        '404':
+          $ref: '#/components/responses/NotFound404'
+        '429':
+          $ref: '#/components/responses/TooManyRequests429'
+        '500':
+          $ref: '#/components/responses/InternalError500'
+      x-rate-limit-tier: STANDARD
+      x-audit: false
+      x-audit-action: GDPR_JOB_GET
+      x-error-strategy: 403/404
+  /auth/refresh:
+    post:
+      tags:
+      - Auth & Profile
+      summary: 刷新会话（轮换 refresh cookie）
+      description: 使用 refresh cookie 轮换并重新签发 session cookie（Set-Cookie）。建议前端在 401
+        时触发刷新或在会话临近过期时静默刷新。
+      security:
+      - refreshCookie: []
+        csrfToken: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Envelope_UserMe'
+        '400':
+          $ref: '#/components/responses/BadRequest400'
+        '401':
+          $ref: '#/components/responses/Unauthorized401'
+        '403':
+          $ref: '#/components/responses/Forbidden403'
+        '429':
+          $ref: '#/components/responses/TooManyRequests429'
+        '500':
+          $ref: '#/components/responses/InternalError500'
+      x-rate-limit-tier: STANDARD
+      x-audit: false
+      x-audit-action: AUTH_REFRESH
+      x-error-strategy: '400'
+  /auth/logout:
+    post:
+      tags:
+      - Auth & Profile
+      summary: 退出登录（清除 session/refresh）
+      description: 服务端撤销会话并清除 session/refresh cookie（Set-Cookie Max-Age=0）。即使当前会话已失效，也建议返回
+        ok（幂等）。
+      security:
+      - sessionCookie: []
+        csrfToken: []
+      - refreshCookie: []
+        csrfToken: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Envelope_OkResult'
+        '400':
+          $ref: '#/components/responses/BadRequest400'
+        '401':
+          $ref: '#/components/responses/Unauthorized401'
+        '429':
+          $ref: '#/components/responses/TooManyRequests429'
+        '500':
+          $ref: '#/components/responses/InternalError500'
+      x-rate-limit-tier: STANDARD
+      x-audit: true
+      x-audit-action: AUTH_LOGOUT
+      x-error-strategy: '400'
+  /gdpr/jobs:
+    get:
+      tags:
+      - GDPR
+      summary: 查询 GDPR 任务列表（Admin/运营）
+      description: 用于运营查看历史 GDPR 导出/删除任务；支持按类型/状态/目标对象过滤，并支持游标分页。
+      security:
+      - sessionCookie: []
+      parameters:
+      - $ref: '#/components/parameters/Limit'
+      - $ref: '#/components/parameters/Cursor'
+      - name: type
+        in: query
+        required: false
+        schema:
+          $ref: '#/components/schemas/GDPRJobType'
+      - name: status
+        in: query
+        required: false
+        schema:
+          $ref: '#/components/schemas/GDPRJobStatus'
+      - name: targetType
+        in: query
+        required: false
+        schema:
+          type: string
+          enum:
+          - USER
+          - TENANT
+          - OWNER
+          - ORG
+      - name: targetId
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: createdFrom
+        in: query
+        required: false
+        schema:
+          type: string
+          format: date-time
+      - name: createdTo
+        in: query
+        required: false
+        schema:
+          type: string
+          format: date-time
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Envelope_GDPRJobList'
+        '400':
+          $ref: '#/components/responses/BadRequest400'
+        '401':
+          $ref: '#/components/responses/Unauthorized401'
+        '403':
+          $ref: '#/components/responses/Forbidden403'
+        '404':
+          $ref: '#/components/responses/NotFound404'
+        '429':
+          $ref: '#/components/responses/TooManyRequests429'
+        '500':
+          $ref: '#/components/responses/InternalError500'
+      x-rate-limit-tier: STANDARD
+      x-audit: false
+      x-audit-action: GDPR_JOB_LIST
+      x-error-strategy: 403/404

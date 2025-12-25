@@ -1,0 +1,10 @@
+title = "gitleaks config (minimal)"
+
+[allowlist]
+description = "Allowlist for false positives"
+paths = [
+  '''.*\.md$''',
+  '''.*\.png$''',
+  '''.*\.jpg$''',
+  '''.*\.zip$'''
+]

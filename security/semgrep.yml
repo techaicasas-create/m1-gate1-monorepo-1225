@@ -1,0 +1,10 @@
+rules:
+  - id: no-localstorage-token
+    patterns:
+      - pattern: localStorage.setItem($K, $V)
+      - metavariable-regex:
+          metavariable: $K
+          regex: (?i).*(token|access_token|refresh_token).*
+    message: "禁止把 token 存 localStorage（Gate1 会话安全基线）"
+    languages: [javascript, typescript]
+    severity: ERROR

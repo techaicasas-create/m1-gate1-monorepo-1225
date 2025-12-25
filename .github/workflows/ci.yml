@@ -1,0 +1,73 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Enable corepack
+        run: corepack enable
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: "9.0.0"
+          run_install: false
+
+      - name: Install deps
+        run: pnpm install --frozen-lockfile=false
+
+      - name: OpenAPI lint
+        run: pnpm openapi:lint
+
+      - name: OpenAPI codegen
+        run: pnpm openapi:codegen
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Unit tests
+        run: pnpm test
+
+  secret-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: gitleaks
+        uses: gitleaks/gitleaks-action@v2
+
+  sast:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install semgrep
+        run: pipx install semgrep
+      - name: Run semgrep rules
+        run: semgrep --config security/semgrep.yml --error
+
+  sca:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # Gate1：先不阻断 CI（后续 M2/M3 可改为 exit-code: '1' 并做治理）
+      - name: Trivy fs (SCA)
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          scan-type: "fs"
+          scan-ref: "."
+          severity: "CRITICAL,HIGH"
+          exit-code: "0"

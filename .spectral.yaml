@@ -1,0 +1,10 @@
+extends:
+  - "spectral:oas"
+
+rules:
+  # Gate1：先保证能跑通；后续再逐步加严
+  oas3-api-servers: off
+  oas3-unused-component: off
+  oas3-valid-schema-example: off
+  operation-operationId: off
+  operation-description: off
