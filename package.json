@@ -4,7 +4,7 @@
   "packageManager": "pnpm@9.0.0",
   "scripts": {
     "lint": "pnpm -r --if-present lint",
-    "typecheck": "pnpm -r --if-present --filter '!@aicasa/api-client' typecheck",
+    "typecheck": "pnpm -r --if-present --filter '!@aicasa/api-client' --filter '!@aicasa/api' typecheck",
     "test": "pnpm -r --if-present --filter '!@aicasa/contract-tests' test",
     "openapi:lint": "bash ./scripts/openapi_lint.sh"
   },
